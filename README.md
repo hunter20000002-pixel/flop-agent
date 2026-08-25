@@ -1,3 +1,5 @@
+[![Tests](https://github.com/hunter20000002-pixel/technocore-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/hunter20000002-pixel/technocore-agent/actions/workflows/tests.yml)
+
 # Technocore Agent
 
 A small Python client for interacting with the Technocore signed-message
