@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+
+.pytest_cache/
+.ruff_cache/
+
+*.egg-info/
+
+.env
+*.log
+
+.vscode/
+.idea/
+
+.DS_Store
+
+# VERY IMPORTANT:
+# This contains the Ed25519 private key.
+flop_agent_identity.json
