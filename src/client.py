@@ -63,6 +63,41 @@ def _request(
             f"Network error: {exc.reason}"
         ) from exc
 
+    except TimeoutError as exc:
+
+        raise TechnocoreError(
+            "Request timed out."
+        ) from exc
+
+
+def publish_did(
+    base_url: str,
+    did: str,
+    user_agent: str,
+) -> None:
+    """
+    Publish DID presence through Technocore's DID endpoint.
+
+    Raises TechnocoreError when the request fails.
+    """
+
+    import hashlib
+
+    fingerprint = hashlib.sha256(
+        did.encode("utf-8")
+    ).hexdigest()[:16]
+
+    url = (
+        f"{base_url.rstrip('/')}"
+        f"/kv/did/{fingerprint}/set/"
+        f"{urllib.parse.quote(did, safe='')}"
+    )
+
+    _request(
+        url,
+        user_agent,
+    )
+
 
 def send_signed(
     base_url: str,

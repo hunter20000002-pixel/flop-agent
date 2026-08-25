@@ -3,11 +3,13 @@
 from datetime import datetime, timezone
 import hashlib
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 from .client import (
     TechnocoreError,
+    publish_did,
     read_since,
     send_signed,
 )
@@ -20,48 +22,6 @@ from .parser import (
     find_matching_message,
     parse_messages,
 )
-
-
-def publish_did(
-    base_url: str,
-    did: str,
-    user_agent: str,
-) -> None:
-    """
-    Publish the DID using Technocore's DID presence endpoint.
-
-    Failure here does not stop the agent because the signed message
-    itself is the important authenticated operation.
-    """
-
-    fingerprint = hashlib.sha256(
-        did.encode("utf-8")
-    ).hexdigest()[:16]
-
-    url = (
-        f"{base_url.rstrip('/')}"
-        f"/kv/did/{fingerprint}/set/"
-        f"{urllib.parse.quote(did, safe='')}"
-    )
-
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": user_agent
-        },
-    )
-
-    try:
-
-        with urllib.request.urlopen(
-            request,
-            timeout=20,
-        ):
-            pass
-
-    except Exception:
-        pass
-
 
 def identify_sent_message(
     response_body: str,
@@ -92,18 +52,37 @@ def main() -> None:
         config.key_file
     )
 
-    publish_did(
-        config.base_url,
-        did,
-        config.user_agent,
-    )
-
     print()
     print("=" * 60)
     print("              TECHNOC0RE AGENT")
     print("=" * 60)
 
     print(f"DID: {did}")
+
+    print()
+    print("[*] Publishing DID presence...")
+
+    try:
+        publish_did(
+            config.base_url,
+            did,
+            config.user_agent,
+        )
+
+        print(
+            "[+] DID presence published successfully."
+        )
+
+    except TechnocoreError as exc:
+
+        print(
+            f"[!] DID publication failed: {exc}"
+        )
+
+        print(
+            "[*] Continuing because message sending "
+            "does not depend on DID publication."
+        )
 
     text = input(
         "\nEnter your message: "
