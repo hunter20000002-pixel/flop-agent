@@ -40,7 +40,7 @@ The long-term goal is to build an agent that can receive a real-world task, plan
                 Verifiable Output
 ```
 
-The architecture is intentionally modular. The autonomous-agent layers shown above are the planned V0.2 direction; they are not yet implemented in the current repository. The future agent runtime should not depend on a specific inference provider or compute network. Flop is the intended first-class decentralized inference/compute integration.
+The architecture is intentionally modular. The core V0.2 agent layers are now implemented as provider-independent building blocks. Persistent memory, concrete inference providers, and Flop integration remain future work. The agent runtime is designed not to depend on a specific inference provider or compute network, with Flop intended as the first-class decentralized inference/compute integration.
 
 ## Current Foundation
 
@@ -60,21 +60,35 @@ The current implementation provides the cryptographic and Technocore communicati
 * HTTP and network error handling
 * Automated tests
 
-These capabilities form the existing identity and communication foundation on which the Flop-focused autonomous-agent layers will be built.
+These capabilities form the identity and communication foundation on which the autonomous-agent layers are built.
+
+### Autonomous-Agent Foundation
+
+* Task model and lifecycle
+* Execution plan model
+* Task planner
+* Agent runtime
+* Structured execution results
+* Tool abstraction
+* Tool registry
+* Inference provider abstraction
+* Automated tests covering the implemented components
+
+These components establish the core interfaces needed to add concrete tools, inference providers, memory, and verifiable execution without coupling the agent to a single network.
 
 ## V0.2 Vision
 
-The next development phase introduces the autonomous-agent core while preserving the existing cryptographic identity and communication foundation. The core will be network-agnostic, with Flop implemented as a dedicated inference provider rather than hard-coded into the agent runtime.
+The next development phase expands the autonomous-agent core while preserving the existing cryptographic identity and communication foundation. The core is network-agnostic, with Flop implemented as a dedicated inference provider rather than hard-coded into the agent runtime.
 
-### Agent Core
+### Agent Core — Implemented Foundation
 
-* Task representation and lifecycle
-* Task planning and decomposition
-* Autonomous execution runtime
-* Structured agent results
-* Persistent agent memory
-* Tool abstraction and registration
-* Modular inference providers
+* [x] Task representation and lifecycle
+* [x] Task planning and decomposition foundation
+* [x] Autonomous execution runtime foundation
+* [x] Structured execution results
+* [ ] Persistent agent memory
+* [x] Tool abstraction and registration
+* [x] Modular inference provider abstraction
 
 ### Verifiable Agent
 
@@ -157,8 +171,8 @@ Example structure:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/hunter20000002-pixel/technocore-agent.git
-cd technocore-agent
+git clone https://github.com/hunter20000002-pixel/flop-agent.git
+cd flop-agent
 ```
 
 ### 2. Create a virtual environment
@@ -201,10 +215,10 @@ pytest
 
 ## Project Structure
 
-The current project is intentionally small. The structure will expand as the autonomous-agent layer is implemented.
+The current project remains intentionally small, but the V0.2 agent foundation is now represented in the source tree.
 
 ```text
-technocore-agent/
+flop-agent/
 ├── .github/
 │   └── workflows/
 ├── src/
@@ -223,7 +237,7 @@ technocore-agent/
 └── requirements.txt
 ```
 
-The planned V0.2 architecture will introduce modules such as:
+The implemented V0.2 architecture now includes:
 
 ```text
 src/
@@ -256,18 +270,18 @@ src/
 
 ### Phase 2 — Agent Core
 
-* [ ] Task model
-* [ ] Task lifecycle
-* [ ] Planner
-* [ ] Agent runtime
-* [ ] Structured agent results
+* [x] Task model
+* [x] Task lifecycle
+* [x] Planner
+* [x] Agent runtime foundation
+* [x] Structured agent results
 
 ### Phase 3 — Agent Capabilities
 
 * [ ] Persistent memory
-* [ ] Tool abstraction
-* [ ] Tool registry
-* [ ] Inference provider abstraction
+* [x] Tool abstraction
+* [x] Tool registry
+* [x] Inference provider abstraction
 * [ ] Autonomous execution loop
 
 ### Phase 4 — Verifiable Agent
@@ -284,7 +298,7 @@ src/
 * [ ] Testnet integration
 * [ ] Compute/inference telemetry
 
-The roadmap is intentionally iterative. Items marked as planned describe the intended architecture, not functionality that is already present in the repository. Protocol-specific components will be implemented against finalized specifications rather than assumptions about unreleased network functionality.
+The roadmap is intentionally iterative. Checked items describe functionality already implemented in the repository; unchecked items describe planned work. Protocol-specific components will be implemented against finalized specifications rather than assumptions about unreleased network functionality.
 
 ## Design Principles
 
