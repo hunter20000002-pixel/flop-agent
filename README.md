@@ -223,21 +223,44 @@ flop-agent/
 │   └── workflows/
 ├── src/
 │   ├── __init__.py
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── plan.py
+│   │   ├── planner.py
+│   │   ├── result.py
+│   │   ├── runtime.py
+│   │   └── task.py
 │   ├── client.py
 │   ├── config.py
+│   ├── inference/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   └── providers/
+│   │       └── __init__.py
 │   ├── identity.py
 │   ├── main.py
-│   └── parser.py
+│   ├── parser.py
+│   └── tools/
+│       ├── __init__.py
+│       ├── base.py
+│       └── registry.py
 ├── test/
 │   ├── test_identity.py
-│   └── test_parser.py
+│   ├── test_inference.py
+│   ├── test_plan.py
+│   ├── test_planner.py
+│   ├── test_registry.py
+│   ├── test_result.py
+│   ├── test_runtime.py
+│   ├── test_task.py
+│   └── test_tools.py
 ├── .gitignore
 ├── LICENSE.txt
 ├── README.md
 └── requirements.txt
 ```
 
-The implemented V0.2 architecture now includes:
+The implemented V0.2 architecture includes:
 
 ```text
 src/
@@ -245,7 +268,6 @@ src/
 │   ├── task.py
 │   ├── planner.py
 │   ├── runtime.py
-│   ├── memory.py
 │   └── result.py
 │
 ├── inference/
@@ -256,6 +278,8 @@ src/
     ├── base.py
     └── registry.py
 ```
+
+Persistent agent memory is not implemented yet and remains a planned component.
 
 ## Development Roadmap
 
