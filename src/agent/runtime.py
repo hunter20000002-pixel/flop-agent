@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from src.agent.plan import ExecutionStep
 from src.agent.planner import Planner
+from src.agent.result import ExecutionResult
 from src.agent.task import Task
 
 
@@ -21,7 +22,7 @@ class AgentRuntime:
         self.planner = planner or Planner()
         self.step_executor = step_executor or self._default_step_executor
 
-    def run(self, task: Task) -> Task:
+    def run(self, task: Task) -> ExecutionResult:
         """Plan and execute a task."""
 
         if not isinstance(task, Task):
@@ -38,21 +39,33 @@ class AgentRuntime:
             task.mark_ready()
             task.mark_running()
 
+            executed_steps = 0
+
             for step in plan.steps:
                 self.step_executor(step)
+                executed_steps += 1
 
             task.mark_completed()
 
-        except Exception:
-            task.mark_failed()
-            raise
+            return ExecutionResult(
+                task_id=task.id,
+                status=task.status,
+                executed_steps=executed_steps,
+            )
 
-        return task
+        except Exception as exc:
+            task.mark_failed()
+
+            return ExecutionResult(
+                task_id=task.id,
+                status=task.status,
+                executed_steps=executed_steps if "executed_steps" in locals() else 0,
+                error=str(exc),
+            )
 
     @staticmethod
     def _default_step_executor(step: ExecutionStep) -> None:
         """Execute a step using the default deterministic executor."""
 
-        # V0.2.4 intentionally does not perform external work yet.
-        # Real tool and inference execution will be introduced later.
+        # V0.2.5 intentionally performs no external work yet.
         _ = step

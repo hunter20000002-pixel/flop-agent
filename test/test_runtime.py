@@ -1,6 +1,7 @@
 import pytest
 
 from src.agent.plan import ExecutionPlan, ExecutionStep
+from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
 from src.agent.task import Task, TaskStatus
 
@@ -10,8 +11,11 @@ def test_runtime_completes_task():
 
     result = AgentRuntime().run(task)
 
-    assert result is task
-    assert task.status == TaskStatus.COMPLETED
+    assert isinstance(result, ExecutionResult)
+    assert result.task_id == task.id
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert not result.failed
 
 
 def test_runtime_runs_all_steps():
@@ -22,8 +26,9 @@ def test_runtime_runs_all_steps():
 
     task = Task(description="Execute steps")
 
-    AgentRuntime(step_executor=executor).run(task)
+    result = AgentRuntime(step_executor=executor).run(task)
 
+    assert result.executed_steps == 1
     assert len(executed_steps) == 1
     assert executed_steps[0].description == "Execute steps"
 
@@ -33,7 +38,7 @@ def test_runtime_preserves_task_identity():
 
     result = AgentRuntime().run(task)
 
-    assert result.id == task.id
+    assert result.task_id == task.id
 
 
 def test_runtime_rejects_invalid_task():
@@ -41,16 +46,19 @@ def test_runtime_rejects_invalid_task():
         AgentRuntime().run("not a task")
 
 
-def test_runtime_marks_task_failed_when_execution_fails():
+def test_runtime_returns_failed_result_when_execution_fails():
     def failing_executor(step):
         raise RuntimeError("execution failed")
 
     task = Task(description="Failing execution")
 
-    with pytest.raises(RuntimeError, match="execution failed"):
-        AgentRuntime(step_executor=failing_executor).run(task)
+    result = AgentRuntime(step_executor=failing_executor).run(task)
 
-    assert task.status == TaskStatus.FAILED
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert not result.succeeded
+    assert result.error == "execution failed"
+    assert result.executed_steps == 0
 
 
 def test_runtime_moves_task_through_lifecycle():
@@ -75,11 +83,11 @@ def test_runtime_moves_task_through_lifecycle():
 
     task = Task(description="Lifecycle test")
 
-    AgentRuntime(
+    result = AgentRuntime(
         planner=RecordingPlanner(),
         step_executor=executor,
     ).run(task)
 
     assert observed_statuses[0] == TaskStatus.PLANNING
     assert TaskStatus.RUNNING in observed_statuses
-    assert task.status == TaskStatus.COMPLETED
+    assert result.status == TaskStatus.COMPLETED
