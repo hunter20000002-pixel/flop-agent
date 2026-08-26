@@ -93,3 +93,24 @@ def test_failed_inference_result():
 def test_provider_requires_implementation():
     with pytest.raises(TypeError):
         InferenceProvider()
+
+def test_inference_result_can_store_provider_and_model():
+    result = InferenceResult(
+        success=True,
+        output="hello",
+        provider="example",
+        model="example-model",
+    )
+
+    assert result.provider == "example"
+    assert result.model == "example-model"
+
+
+def test_inference_result_is_immutable():
+    result = InferenceResult(
+        success=True,
+        output="hello",
+    )
+
+    with pytest.raises(AttributeError):
+        result.output = "changed"
