@@ -1,10 +1,12 @@
-# Technocore Autonomous Agent
+# FLOP Agent
 
-A cryptographically identified autonomous AI agent project built on persistent `did:key` identity, signed communication, and a modular architecture for future agent execution, inference, tools, and verifiable results.
+A cryptographically identified, network-agnostic autonomous AI agent being built to participate in the Flop Network's decentralized inference ecosystem, with a modular architecture for agent execution, inference, tools, and verifiable results.
 
-The current implementation is the cryptographic identity and Technocore communication foundation. The project is now evolving toward a full autonomous-agent runtime with task planning, memory, tools, modular inference providers, and verifiable execution.
+The current implementation provides persistent Ed25519 identity, `did:key` identity, signed communication, and a Technocore client. Technocore is an existing independent communication/identity foundation used by this project; it is not a component of the Flop Network.
 
-The long-term goal is to build an agent that can receive a real-world task, plan and execute the work, use external tools and inference, communicate with other agents, and produce results that can be independently verified.
+The project is now evolving toward a full autonomous-agent runtime designed to use Flop as a first-class decentralized compute and inference provider while remaining independent of any single inference network.
+
+The long-term goal is to build an agent that can receive a real-world task, plan and execute the work, use tools and decentralized inference, communicate with other agents, and produce results that can be independently verified.
 
 ## Architecture
 
@@ -32,13 +34,13 @@ The long-term goal is to build an agent that can receive a real-world task, plan
                    Ed25519 / DID
                         │
                         ▼
-                 Technocore Layer
+                 Inference Layer
                         │
                         ▼
                 Verifiable Output
 ```
 
-The architecture is intentionally modular. The autonomous-agent layers shown above are the planned V0.2 direction; they are not yet implemented in the current repository. The future agent runtime should not depend on a specific inference provider or compute network.
+The architecture is intentionally modular. The autonomous-agent layers shown above are the planned V0.2 direction; they are not yet implemented in the current repository. The future agent runtime should not depend on a specific inference provider or compute network. Flop is the intended first-class decentralized inference/compute integration.
 
 ## Current Foundation
 
@@ -58,11 +60,11 @@ The current implementation provides the cryptographic and Technocore communicati
 * HTTP and network error handling
 * Automated tests
 
-These capabilities form the existing identity and communication foundation on which the autonomous-agent layers will be built.
+These capabilities form the existing identity and communication foundation on which the Flop-focused autonomous-agent layers will be built.
 
 ## V0.2 Vision
 
-The next development phase introduces the autonomous-agent core while preserving the existing identity and Technocore client.
+The next development phase introduces the autonomous-agent core while preserving the existing cryptographic identity and communication foundation. The core will be network-agnostic, with Flop implemented as a dedicated inference provider rather than hard-coded into the agent runtime.
 
 ### Agent Core
 
@@ -94,11 +96,13 @@ Inference is designed as a provider abstraction rather than a hard-coded depende
                                Flop Provider
 ```
 
-The Flop integration is planned as a future provider and will be implemented against the actual network/testnet interface when that interface is available and sufficiently specified. It is not part of the current implementation.
+Flop is the intended first major decentralized compute/inference provider for this project. The Flop integration is planned and will be implemented against the actual network/testnet interface when it is available and sufficiently specified. It is not part of the current implementation.
+
+The same agent runtime should eventually be able to switch between providers based on task requirements such as capability, latency, cost, availability, or privacy.
 
 ## How It Works Today
 
-The current client establishes a persistent identity and uses it to sign messages submitted through the Technocore interface.
+The current implementation establishes a persistent cryptographic identity and uses the existing Technocore interface for signed communication. This is the project's current foundation; it should not be interpreted as an existing integration between Technocore and the Flop Network.
 
 ```text
 Ed25519 Identity
