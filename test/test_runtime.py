@@ -1,5 +1,6 @@
 import pytest
 
+from src.agent.control import ControlDecision, ExecutionController
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
@@ -495,3 +496,65 @@ def test_runtime_allows_execution_within_max_steps():
     assert result.status == TaskStatus.COMPLETED
     assert result.succeeded
     assert result.executed_steps == 2
+
+def test_runtime_uses_execution_controller():
+    decisions = []
+
+    class RecordingController(ExecutionController):
+        def decide(self, outcome):
+            decision = super().decide(outcome)
+            decisions.append(decision)
+            return decision
+
+    class SingleStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Step one",
+                        order=1,
+                    ),
+                ),
+            )
+
+    task = Task(description="Controller test")
+
+    result = AgentRuntime(
+        planner=SingleStepPlanner(),
+        controller=RecordingController(),
+    ).run(task)
+
+    assert result.succeeded
+    assert decisions == [ControlDecision.CONTINUE]
+
+def test_runtime_stops_when_controller_returns_stop():
+    class StopController(ExecutionController):
+        def decide(self, outcome):
+            return ControlDecision.STOP
+
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Step one",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Step two",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(description="Stop test")
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+        controller=StopController(),
+    ).run(task)
+
+    assert result.succeeded
+    assert result.executed_steps == 1

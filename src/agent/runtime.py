@@ -9,6 +9,11 @@ from src.agent.task import Task
 from src.inference.base import InferenceProvider, InferenceRequest
 from src.tools.base import ToolResult
 from src.tools.registry import ToolRegistry
+from src.agent.control import (
+    ControlDecision,
+    ExecutionController,
+    StepOutcome,
+)
 
 
 StepExecutor = Callable[[ExecutionStep], None]
@@ -24,6 +29,7 @@ class AgentRuntime:
         inference_provider: InferenceProvider | None = None,
         tool_registry: ToolRegistry | None = None,
         max_steps: int = 100,
+        controller: ExecutionController | None = None,
     ) -> None:
         self.planner = planner or Planner()
         self.step_executor = step_executor or self._default_step_executor
@@ -34,6 +40,8 @@ class AgentRuntime:
             raise ValueError("max_steps must be greater than zero")
 
         self.max_steps = max_steps
+
+        self.controller = controller or ExecutionController()
 
     def run(self, task: Task) -> ExecutionResult:
         """Plan and execute a task."""
@@ -61,12 +69,54 @@ class AgentRuntime:
                         f"execution step limit exceeded: {self.max_steps}"
                     )
 
-                output = self._execute_step(step)
+                try:
+                    output = self._execute_step(step)
 
-                if output is not None:
-                    outputs.append(output)
+                    outcome = StepOutcome(
+                        success=True,
+                        output=output,
+                    )
+
+                except Exception as exc:
+                    outcome = StepOutcome(
+                        success=False,
+                        error=str(exc),
+                    )
+
+                    decision = self.controller.decide(outcome)
+
+                    if decision == ControlDecision.FAIL:
+                        raise RuntimeError(
+                            outcome.error or "execution step failed"
+                        )
+
+                    if decision == ControlDecision.STOP:
+                        break
+
+                    continue
+
+                decision = self.controller.decide(outcome)
+
+                if outcome.output is not None:
+                    outputs.append(str(outcome.output))
 
                 executed_steps += 1
+
+                if decision == ControlDecision.FAIL:
+                    raise RuntimeError(
+                        outcome.error or "execution step failed"
+                    )
+
+                if decision == ControlDecision.STOP:
+                    break
+
+                if decision == ControlDecision.FAIL:
+                    raise RuntimeError(
+                        outcome.error or "execution step failed"
+                    )
+
+                if decision == ControlDecision.STOP:
+                    break
 
             task.mark_completed()
 
