@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
+from src.agent.history import ExecutionHistory
 from src.agent.task import TaskStatus
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutionResult:
-    """Structured result produced by the agent runtime."""
+    """Structured result produced by an agent execution."""
 
     task_id: UUID
     status: TaskStatus
-    executed_steps: int
-    output: str | None = None
+    executed_steps: int = 0
+    output: Any = None
     error: str | None = None
+    history: ExecutionHistory | None = None
 
     @property
     def succeeded(self) -> bool:

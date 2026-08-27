@@ -1,5 +1,5 @@
 from uuid import uuid4
-
+from src.agent.history import ExecutionHistory, ExecutionRecord
 from src.agent.result import ExecutionResult
 from src.agent.task import TaskStatus
 
@@ -53,3 +53,38 @@ def test_execution_result_is_immutable():
         pass
     else:
         raise AssertionError("ExecutionResult should be immutable")
+
+def test_execution_result_can_store_history():
+    task_id = uuid4()
+
+    history = ExecutionHistory(
+        task_id=task_id,
+        records=(
+            ExecutionRecord(
+                step_id=uuid4(),
+                description="Step one",
+                success=True,
+                output="done",
+            ),
+        ),
+    )
+
+    result = ExecutionResult(
+        task_id=task_id,
+        status=TaskStatus.COMPLETED,
+        executed_steps=1,
+        history=history,
+    )
+
+    assert result.history == history
+    assert result.history is not None
+    assert result.history.record_count == 1
+
+
+def test_execution_result_history_defaults_to_none():
+    result = ExecutionResult(
+        task_id=uuid4(),
+        status=TaskStatus.COMPLETED,
+    )
+
+    assert result.history is None

@@ -558,3 +558,162 @@ def test_runtime_stops_when_controller_returns_stop():
 
     assert result.succeeded
     assert result.executed_steps == 1
+
+def test_runtime_records_successful_step_in_history():
+    task = Task(description="Run a successful step")
+
+    result = AgentRuntime().run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.history is not None
+    assert result.history.record_count == 1
+
+    record = result.history.last
+    assert record is not None
+    assert record.description == "Run a successful step"
+    assert record.success
+    assert record.error is None
+    assert record.decision == ControlDecision.CONTINUE
+
+
+def test_runtime_records_tool_execution_in_history():
+    registry = ToolRegistry()
+    registry.register(ExampleTool())
+
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Calculate two plus two",
+                        order=1,
+                        tool_name="calculator",
+                        tool_args={"expression": "2 + 2"},
+                    ),
+                ),
+            )
+
+    task = Task(description="Calculate two plus two")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+        tool_registry=registry,
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.history is not None
+    assert result.history.record_count == 1
+
+    record = result.history.last
+    assert record is not None
+    assert record.description == "Calculate two plus two"
+    assert record.success
+    assert record.output == "4"
+    assert record.error is None
+    assert record.decision == ControlDecision.CONTINUE
+
+
+def test_runtime_records_inference_execution_in_history():
+    class InferencePlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Explain the result",
+                        order=1,
+                    ),
+                ),
+            )
+
+    task = Task(description="Explain something")
+
+    result = AgentRuntime(
+        planner=InferencePlanner(),
+        inference_provider=ExampleInferenceProvider(),
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.history is not None
+    assert result.history.record_count == 1
+
+    record = result.history.last
+    assert record is not None
+    assert record.description == "Explain the result"
+    assert record.success
+    assert record.output == "Generated: Explain the result"
+    assert record.error is None
+    assert record.decision == ControlDecision.CONTINUE
+
+
+def test_runtime_records_failed_step_in_history():
+    def failing_executor(step):
+        raise RuntimeError("execution failed")
+
+    task = Task(description="Failing execution")
+
+    result = AgentRuntime(
+        step_executor=failing_executor,
+    ).run(task)
+
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert result.history is not None
+    assert result.history.record_count == 1
+
+    record = result.history.last
+    assert record is not None
+    assert record.description == "Failing execution"
+    assert not record.success
+    assert record.failed
+    assert record.output is None
+    assert record.error == "execution failed"
+    assert record.decision == ControlDecision.FAIL
+
+
+def test_runtime_history_preserves_execution_order():
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="First step",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Second step",
+                        order=2,
+                    ),
+                    ExecutionStep(
+                        description="Third step",
+                        order=3,
+                    ),
+                ),
+            )
+
+    task = Task(description="Run three steps")
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.history is not None
+    assert result.history.record_count == 3
+
+    assert [
+        record.description
+        for record in result.history.records
+    ] == [
+        "First step",
+        "Second step",
+        "Third step",
+    ]
+
+    assert all(record.success for record in result.history.records)
+    assert all(
+        record.decision == ControlDecision.CONTINUE
+        for record in result.history.records
+    )
