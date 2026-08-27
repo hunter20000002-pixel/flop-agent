@@ -23,11 +23,17 @@ class AgentRuntime:
         step_executor: StepExecutor | None = None,
         inference_provider: InferenceProvider | None = None,
         tool_registry: ToolRegistry | None = None,
+        max_steps: int = 100,
     ) -> None:
         self.planner = planner or Planner()
         self.step_executor = step_executor or self._default_step_executor
         self.inference_provider = inference_provider
         self.tool_registry = tool_registry
+
+        if max_steps < 1:
+            raise ValueError("max_steps must be greater than zero")
+
+        self.max_steps = max_steps
 
     def run(self, task: Task) -> ExecutionResult:
         """Plan and execute a task."""
@@ -50,6 +56,11 @@ class AgentRuntime:
             task.mark_running()
 
             for step in plan.steps:
+                if executed_steps >= self.max_steps:
+                    raise RuntimeError(
+                        f"execution step limit exceeded: {self.max_steps}"
+                    )
+
                 output = self._execute_step(step)
 
                 if output is not None:

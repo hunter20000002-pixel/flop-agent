@@ -432,3 +432,66 @@ def test_runtime_can_execute_tools_and_inference_in_same_plan():
         "4\n"
         "Generated: Explain the result"
     )
+
+def test_runtime_rejects_invalid_max_steps():
+    with pytest.raises(ValueError, match="max_steps must be greater than zero"):
+        AgentRuntime(max_steps=0)
+
+
+def test_runtime_respects_max_steps():
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Step one",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Step two",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(description="Run multiple steps")
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+        max_steps=1,
+    ).run(task)
+
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert result.executed_steps == 1
+    assert result.error == "execution step limit exceeded: 1"
+
+
+def test_runtime_allows_execution_within_max_steps():
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Step one",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Step two",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(description="Run multiple steps")
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+        max_steps=2,
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.executed_steps == 2
