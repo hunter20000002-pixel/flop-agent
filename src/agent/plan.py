@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -11,6 +12,8 @@ class ExecutionStep:
     description: str
     order: int
     id: UUID = field(default_factory=uuid4)
+    tool_name: str | None = None
+    tool_args: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.description.strip():
@@ -18,6 +21,17 @@ class ExecutionStep:
 
         if self.order < 1:
             raise ValueError("step order must be greater than zero")
+
+        if self.tool_name is not None and not self.tool_name.strip():
+            raise ValueError("tool name cannot be empty")
+
+        object.__setattr__(self, "tool_args", dict(self.tool_args))
+
+    @property
+    def uses_tool(self) -> bool:
+        """Return True when this step explicitly requests a tool."""
+
+        return self.tool_name is not None
 
 
 @dataclass(frozen=True, slots=True)

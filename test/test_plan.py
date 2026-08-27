@@ -106,3 +106,50 @@ def test_execution_plan_is_immutable():
 
     with pytest.raises(AttributeError):
         plan.task_id = uuid4()
+
+def test_execution_step_can_reference_tool():
+    step = ExecutionStep(
+        description="Calculate a value",
+        order=1,
+        tool_name="calculator",
+        tool_args={"expression": "2 + 2"},
+    )
+
+    assert step.tool_name == "calculator"
+    assert step.tool_args == {"expression": "2 + 2"}
+    assert step.uses_tool
+
+
+def test_execution_step_without_tool_does_not_use_tool():
+    step = ExecutionStep(
+        description="Think about the task",
+        order=1,
+    )
+
+    assert step.tool_name is None
+    assert step.tool_args == {}
+    assert not step.uses_tool
+
+
+def test_execution_step_rejects_empty_tool_name():
+    with pytest.raises(ValueError, match="tool name cannot be empty"):
+        ExecutionStep(
+            description="Use a tool",
+            order=1,
+            tool_name="   ",
+        )
+
+
+def test_execution_step_copies_tool_arguments():
+    arguments = {"value": 42}
+
+    step = ExecutionStep(
+        description="Process value",
+        order=1,
+        tool_name="processor",
+        tool_args=arguments,
+    )
+
+    arguments["value"] = 99
+
+    assert step.tool_args == {"value": 42}

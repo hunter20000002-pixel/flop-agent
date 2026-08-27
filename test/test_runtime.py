@@ -232,3 +232,203 @@ def test_runtime_uses_step_executor_without_inference_provider():
     assert result.status == TaskStatus.COMPLETED
     assert executed == ["Use executor"]
     assert result.output is None
+
+from src.tools.base import Tool, ToolResult
+from src.tools.registry import ToolRegistry
+
+
+class ExampleTool(Tool):
+    @property
+    def name(self) -> str:
+        return "calculator"
+
+    @property
+    def description(self) -> str:
+        return "Performs calculations."
+
+    def execute(self, **kwargs):
+        expression = kwargs["expression"]
+
+        if expression == "2 + 2":
+            return ToolResult(
+                success=True,
+                output="4",
+            )
+
+        return ToolResult(
+            success=False,
+            error="unsupported expression",
+        )
+
+
+class FailingTool(Tool):
+    @property
+    def name(self) -> str:
+        return "failing"
+
+    @property
+    def description(self) -> str:
+        return "Always fails."
+
+    def execute(self, **kwargs):
+        return ToolResult(
+            success=False,
+            error="tool execution failed",
+        )
+
+
+def test_runtime_executes_tool_from_registry():
+    registry = ToolRegistry()
+    registry.register(ExampleTool())
+
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Calculate two plus two",
+                        order=1,
+                        tool_name="calculator",
+                        tool_args={"expression": "2 + 2"},
+                    ),
+                ),
+            )
+
+    task = Task(description="Calculate two plus two")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+        tool_registry=registry,
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.executed_steps == 1
+    assert result.output == "4"
+    assert result.error is None
+
+
+def test_runtime_fails_when_required_tool_registry_is_missing():
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Use calculator",
+                        order=1,
+                        tool_name="calculator",
+                    ),
+                ),
+            )
+
+    task = Task(description="Use calculator")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+    ).run(task)
+
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert result.error == (
+        "step requires tool 'calculator', "
+        "but no tool registry is configured"
+    )
+
+
+def test_runtime_fails_when_tool_is_not_registered():
+    registry = ToolRegistry()
+
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Use calculator",
+                        order=1,
+                        tool_name="calculator",
+                    ),
+                ),
+            )
+
+    task = Task(description="Use calculator")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+        tool_registry=registry,
+    ).run(task)
+
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert result.error == "'tool not found: calculator'"
+
+
+def test_runtime_fails_when_tool_execution_fails():
+    registry = ToolRegistry()
+    registry.register(FailingTool())
+
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Run failing tool",
+                        order=1,
+                        tool_name="failing",
+                    ),
+                ),
+            )
+
+    task = Task(description="Run failing tool")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+        tool_registry=registry,
+    ).run(task)
+
+    assert result.status == TaskStatus.FAILED
+    assert result.failed
+    assert result.error == "tool execution failed"
+    assert result.executed_steps == 0
+
+
+def test_runtime_can_execute_tools_and_inference_in_same_plan():
+    registry = ToolRegistry()
+    registry.register(ExampleTool())
+
+    class MixedPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Calculate two plus two",
+                        order=1,
+                        tool_name="calculator",
+                        tool_args={"expression": "2 + 2"},
+                    ),
+                    ExecutionStep(
+                        description="Explain the result",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(description="Calculate and explain")
+
+    result = AgentRuntime(
+        planner=MixedPlanner(),
+        tool_registry=registry,
+        inference_provider=ExampleInferenceProvider(),
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.executed_steps == 2
+    assert result.output == (
+        "4\n"
+        "Generated: Explain the result"
+    )
