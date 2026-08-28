@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+from types import MappingProxyType
+from collections.abc import Mapping
+
 from src.agent.control import ControlDecision
 from src.agent.plan import ExecutionStep
-
 
 @dataclass(frozen=True, slots=True)
 class ExecutionRecord:
@@ -18,13 +21,76 @@ class ExecutionRecord:
     output: Any = None
     error: str | None = None
     decision: ControlDecision = ControlDecision.CONTINUE
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    started_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    completed_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     id: UUID = field(default_factory=uuid4)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("metadata must be a mapping")
+
+        object.__setattr__(
+            self,
+            "metadata",
+            MappingProxyType(dict(self.metadata)),
+        )
+
+        if not isinstance(self.step_id, UUID):
+            raise TypeError("step_id must be a UUID")
+
+        if not isinstance(self.description, str):
+            raise TypeError("description must be a string")
+
+        if not self.description.strip():
+            raise ValueError("description must not be empty")
+
+        if not isinstance(self.success, bool):
+            raise TypeError("success must be a boolean")
+
+        if not isinstance(self.decision, ControlDecision):
+            raise TypeError(
+                "decision must be a ControlDecision"
+            )
+
+        if not isinstance(self.started_at, datetime):
+            raise TypeError("started_at must be a datetime")
+
+        if not isinstance(self.completed_at, datetime):
+            raise TypeError("completed_at must be a datetime")
+
+        if self.completed_at < self.started_at:
+            raise ValueError(
+                "completed_at cannot be earlier than started_at"
+            )
+
+        if self.success and self.error is not None:
+            raise ValueError(
+                "successful execution records cannot contain an error"
+            )
+
+        if not self.success and self.error is None:
+            raise ValueError(
+                "failed execution records must contain an error"
+            )
 
     @property
     def failed(self) -> bool:
         """Return True when the step failed."""
 
         return not self.success
+
+    @property
+    def duration_seconds(self) -> float:
+        """Return execution duration in seconds."""
+
+        return (
+            self.completed_at - self.started_at
+        ).total_seconds()
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +121,63 @@ class ExecutionHistory:
 
         return self.records[-1]
 
-    def add(self, record: ExecutionRecord) -> ExecutionHistory:
+    @property
+    def successful_records(self) -> tuple[ExecutionRecord, ...]:
+        """Return all successful execution records in execution order."""
+
+        return tuple(
+            record
+            for record in self.records
+            if record.success
+        )
+
+    @property
+    def failed_records(self) -> tuple[ExecutionRecord, ...]:
+        """Return all failed execution records in execution order."""
+
+        return tuple(
+            record
+            for record in self.records
+            if record.failed
+        )
+
+    @property
+    def has_failures(self) -> bool:
+        """Return True when at least one execution record failed."""
+
+        return any(
+            record.failed
+            for record in self.records
+        )
+
+    @property
+    def total_duration_seconds(self) -> float:
+        """Return the total duration of all recorded executions."""
+
+        return sum(
+            record.duration_seconds
+            for record in self.records
+        )
+
+    def records_for_step(
+        self,
+        step_id: UUID,
+    ) -> tuple[ExecutionRecord, ...]:
+        """Return all records associated with a step ID."""
+
+        if not isinstance(step_id, UUID):
+            raise TypeError("step_id must be a UUID")
+
+        return tuple(
+            record
+            for record in self.records
+            if record.step_id == step_id
+        )
+
+    def add(
+        self,
+        record: ExecutionRecord,
+    ) -> ExecutionHistory:
         """Return a new history with the supplied record appended."""
 
         if not isinstance(record, ExecutionRecord):
@@ -74,6 +196,9 @@ class ExecutionHistory:
         output: Any = None,
         error: str | None = None,
         decision: ControlDecision = ControlDecision.CONTINUE,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> ExecutionHistory:
         """Return a new history containing a record for the supplied step."""
 
@@ -87,6 +212,17 @@ class ExecutionHistory:
             output=output,
             error=error,
             decision=decision,
+            metadata=metadata or {},
+            started_at=(
+                started_at
+                if started_at is not None
+                else datetime.now(timezone.utc)
+            ),
+            completed_at=(
+                completed_at
+                if completed_at is not None
+                else datetime.now(timezone.utc)
+            ),
         )
 
         return self.add(execution_record)
@@ -101,22 +237,36 @@ class ExecutionHistory:
         output: Any = None,
         error: str | None = None,
         decision: ControlDecision = ControlDecision.CONTINUE,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> ExecutionHistory:
         """Create a history containing one record for a step."""
-        
+
         if not isinstance(step, ExecutionStep):
             raise TypeError("step must be an ExecutionStep")
-        return cls(
 
-            task_id=task_id,
-            records=(
-                ExecutionRecord(
-                    step_id=step.id,
-                    description=step.description,
-                    success=success,
-                    output=output,
-                    error=error,
-                    decision=decision,
-                ),
+        execution_record = ExecutionRecord(
+            step_id=step.id,
+            description=step.description,
+            success=success,
+            output=output,
+            error=error,
+            decision=decision,
+            metadata=metadata or {},
+            started_at=(
+                started_at
+                if started_at is not None
+                else datetime.now(timezone.utc)
             ),
+            completed_at=(
+                completed_at
+                if completed_at is not None
+                else datetime.now(timezone.utc)
+            ),
+        )
+
+        return cls(
+            task_id=task_id,
+            records=(execution_record,),
         )

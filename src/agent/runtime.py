@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 from src.agent.control import (
     ControlDecision,
@@ -25,25 +26,28 @@ class AgentRuntime:
     def __init__(
         self,
         planner: Planner | None = None,
+        *,
         step_executor: StepExecutor | None = None,
         inference_provider: InferenceProvider | None = None,
         tool_registry: ToolRegistry | None = None,
-        max_steps: int = 100,
         controller: ExecutionController | None = None,
+        max_steps: int = 100,
     ) -> None:
         self.planner = planner or Planner()
-        self.step_executor = step_executor or self._default_step_executor
+        self.step_executor = (
+            step_executor or self._default_step_executor
+        )
         self.inference_provider = inference_provider
         self.tool_registry = tool_registry
 
-        if max_steps < 1:
+        if max_steps <= 0:
             raise ValueError("max_steps must be greater than zero")
 
         self.max_steps = max_steps
         self.controller = controller or ExecutionController()
 
     def run(self, task: Task) -> ExecutionResult:
-        """Plan and execute a task."""
+        """Plan and execute a task, returning a structured result."""
 
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")
@@ -54,9 +58,6 @@ class AgentRuntime:
 
         try:
             plan = self.planner.plan(task)
-
-            if plan.is_empty:
-                raise ValueError("execution plan cannot be empty")
 
             task.mark_ready()
             task.mark_running()
@@ -70,9 +71,32 @@ class AgentRuntime:
                         f"execution step limit exceeded: {self.max_steps}"
                     )
 
+                started_at = datetime.now(timezone.utc)
+
                 outcome = self._execute_step(step)
 
+                completed_at = datetime.now(timezone.utc)
+
                 decision = self.controller.decide(outcome)
+
+                metadata = {
+                    "step_order": step.order,
+                    "execution_mode": (
+                        "tool"
+                        if step.tool_name is not None
+                        else (
+                            "inference"
+                            if self.inference_provider is not None
+                            else "executor"
+                        )
+                    ),
+                }
+
+                if step.tool_name is not None:
+                    metadata["tool_name"] = step.tool_name
+
+                if self.inference_provider is not None and step.tool_name is None:
+                    metadata["provider"] = self.inference_provider.name
 
                 history = history.record(
                     step,
@@ -80,6 +104,9 @@ class AgentRuntime:
                     output=outcome.output,
                     error=outcome.error,
                     decision=decision,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    metadata=metadata,
                 )
 
                 if outcome.output is not None:
@@ -147,7 +174,10 @@ class AgentRuntime:
                 error=str(exc),
             )
 
-    def _execute_tool_step(self, step: ExecutionStep) -> StepOutcome:
+    def _execute_tool_step(
+        self,
+        step: ExecutionStep,
+    ) -> StepOutcome:
         """Resolve and execute the tool requested by a plan step."""
 
         if self.tool_registry is None:
@@ -173,7 +203,7 @@ class AgentRuntime:
         self,
         step: ExecutionStep,
     ) -> StepOutcome:
-        """Execute a plan step through the configured inference provider."""
+        """Execute one plan step through the configured inference provider."""
 
         result = self.inference_provider.generate(
             InferenceRequest(
@@ -189,6 +219,6 @@ class AgentRuntime:
 
     @staticmethod
     def _default_step_executor(step: ExecutionStep) -> None:
-        """Execute a step using the default deterministic executor."""
+        """Default executor for a step with no external execution mechanism."""
 
-        _ = step
+        return None
