@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from src.agent.context import AgentContext
 from src.agent.control import (
     ControlDecision,
     ExecutionController,
@@ -21,7 +22,7 @@ StepExecutor = Callable[[ExecutionStep], None]
 
 
 class AgentRuntime:
-    """Orchestrates task planning, inference, tools, and execution."""
+    """Orchestrates task planning, inference, tools, memory, and execution."""
 
     def __init__(
         self,
@@ -34,14 +35,18 @@ class AgentRuntime:
         max_steps: int = 100,
     ) -> None:
         self.planner = planner or Planner()
+
         self.step_executor = (
             step_executor or self._default_step_executor
         )
+
         self.inference_provider = inference_provider
         self.tool_registry = tool_registry
 
         if max_steps <= 0:
-            raise ValueError("max_steps must be greater than zero")
+            raise ValueError(
+                "max_steps must be greater than zero"
+            )
 
         self.max_steps = max_steps
         self.controller = controller or ExecutionController()
@@ -56,19 +61,32 @@ class AgentRuntime:
 
         history = ExecutionHistory(task_id=task.id)
 
+        executed_steps = 0
+        outputs: list[str] = []
+
         try:
-            plan = self.planner.plan(task)
+            context = AgentContext(
+                task=task,
+                history=history,
+                state="planning",
+            )
+
+            plan = self._create_plan(
+                context=context,
+                task=task,
+            )
 
             task.mark_ready()
             task.mark_running()
 
-            executed_steps = 0
-            outputs: list[str] = []
+            context = context.with_plan(plan)
+            context = context.with_state("running")
 
-            for step in plan.steps:
+            for step in context.plan_steps:
                 if executed_steps >= self.max_steps:
                     raise RuntimeError(
-                        f"execution step limit exceeded: {self.max_steps}"
+                        f"execution step limit exceeded: "
+                        f"{self.max_steps}"
                     )
 
                 started_at = datetime.now(timezone.utc)
@@ -95,8 +113,13 @@ class AgentRuntime:
                 if step.tool_name is not None:
                     metadata["tool_name"] = step.tool_name
 
-                if self.inference_provider is not None and step.tool_name is None:
-                    metadata["provider"] = self.inference_provider.name
+                if (
+                    self.inference_provider is not None
+                    and step.tool_name is None
+                ):
+                    metadata["provider"] = (
+                        self.inference_provider.name
+                    )
 
                 history = history.record(
                     step,
@@ -109,12 +132,15 @@ class AgentRuntime:
                     metadata=metadata,
                 )
 
+                context = context.with_history(history)
+
                 if outcome.output is not None:
                     outputs.append(str(outcome.output))
 
                 if decision == ControlDecision.FAIL:
                     raise RuntimeError(
-                        outcome.error or "execution step failed"
+                        outcome.error
+                        or "execution step failed"
                     )
 
                 executed_steps += 1
@@ -124,12 +150,18 @@ class AgentRuntime:
 
             task.mark_completed()
 
+            context = context.with_state("completed")
+
             return ExecutionResult(
                 task_id=task.id,
                 status=task.status,
                 executed_steps=executed_steps,
-                output="\n".join(outputs) if outputs else None,
-                history=history,
+                output=(
+                    "\n".join(outputs)
+                    if outputs
+                    else None
+                ),
+                history=context.history,
             )
 
         except Exception as exc:
@@ -138,22 +170,41 @@ class AgentRuntime:
             return ExecutionResult(
                 task_id=task.id,
                 status=task.status,
-                executed_steps=(
-                    executed_steps
-                    if "executed_steps" in locals()
-                    else 0
-                ),
+                executed_steps=executed_steps,
                 output=(
                     "\n".join(outputs)
-                    if "outputs" in locals() and outputs
+                    if outputs
                     else None
                 ),
                 error=str(exc),
                 history=history,
             )
 
-    def _execute_step(self, step: ExecutionStep) -> StepOutcome:
-        """Execute one step using the configured execution mechanism."""
+    def _create_plan(
+        self,
+        context: AgentContext,
+        task: Task,
+    ):
+        """
+        Create a plan while supporting both the new
+        context-aware Planner and existing custom planners.
+
+        The built-in Planner receives AgentContext.
+
+        Existing test/custom planners that still accept
+        Task continue receiving Task.
+        """
+
+        if isinstance(self.planner, Planner):
+            return self.planner.plan(context)
+
+        return self.planner.plan(task)
+
+    def _execute_step(
+        self,
+        step: ExecutionStep,
+    ) -> StepOutcome:
+        """Execute one step using the configured mechanism."""
 
         try:
             if step.tool_name is not None:
@@ -189,9 +240,13 @@ class AgentRuntime:
                 ),
             )
 
-        tool = self.tool_registry.get(step.tool_name)
+        tool = self.tool_registry.get(
+            step.tool_name
+        )
 
-        result = tool.execute(**step.tool_args)
+        result = tool.execute(
+            **step.tool_args
+        )
 
         return StepOutcome(
             success=result.success,
@@ -203,7 +258,7 @@ class AgentRuntime:
         self,
         step: ExecutionStep,
     ) -> StepOutcome:
-        """Execute one plan step through the configured inference provider."""
+        """Execute one plan step through inference."""
 
         result = self.inference_provider.generate(
             InferenceRequest(
@@ -218,7 +273,9 @@ class AgentRuntime:
         )
 
     @staticmethod
-    def _default_step_executor(step: ExecutionStep) -> None:
-        """Default executor for a step with no external execution mechanism."""
+    def _default_step_executor(
+        step: ExecutionStep,
+    ) -> None:
+        """Default executor for a step without an external mechanism."""
 
         return None

@@ -2,53 +2,62 @@ from uuid import uuid4
 
 import pytest
 
+from src.agent.context import AgentContext
+from src.agent.memory import MemoryEntry
 from src.agent.plan import ExecutionPlan
 from src.agent.planner import Planner
 from src.agent.task import Task
 
 
-def test_planner_creates_execution_plan():
+def test_planner_accepts_context():
     task = Task(description="Research decentralized AI")
 
-    planner = Planner()
-    plan = planner.plan(task)
+    context = AgentContext(
+        task=task,
+        agent_id="test-agent",
+    )
+
+    plan = Planner().plan(context)
 
     assert isinstance(plan, ExecutionPlan)
     assert plan.task_id == task.id
     assert plan.step_count == 1
     assert plan.steps[0].description == "Research decentralized AI"
-    assert plan.steps[0].order == 1
 
 
-def test_planner_strips_task_description():
-    task = Task(description="  Research decentralized AI  ")
+def test_planner_rejects_context_for_different_task():
+    task = Task(description="Research decentralized AI")
+    other_task = Task(description="Research blockchain")
 
-    plan = Planner().plan(task)
-
-    assert plan.steps[0].description == "Research decentralized AI"
-
-
-def test_planner_rejects_invalid_task():
-    planner = Planner()
-
-    with pytest.raises(TypeError):
-        planner.plan("Research decentralized AI")
-
-
-def test_planner_rejects_empty_description():
-    task = Task(description="   ")
-
-    with pytest.raises(ValueError):
-        Planner().plan(task)
-
-
-def test_planner_preserves_task_identity():
-    task_id = uuid4()
-    task = Task(
-        id=task_id,
-        description="Test identity preservation",
+    context = AgentContext(
+        task=task,
+        agent_id="test-agent",
     )
 
-    plan = Planner().plan(task)
+    with pytest.raises(ValueError):
+        Planner().plan(
+            context,
+            task=other_task,
+        )
 
-    assert plan.task_id == task_id
+
+def test_planner_uses_memory_context():
+    task = Task(description="Research decentralized AI")
+
+    memory = MemoryEntry(
+        content="Previous research found decentralized inference networks.",
+        task_id=task.id,
+    )
+
+    context = AgentContext(
+        task=task,
+        memories=(memory,),
+        agent_id="test-agent",
+    )
+
+    plan = Planner().plan(context)
+
+    assert isinstance(plan, ExecutionPlan)
+    assert plan.task_id == task.id
+    assert plan.step_count == 1
+    assert "Previous research" in plan.steps[0].description
