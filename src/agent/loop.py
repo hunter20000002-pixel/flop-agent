@@ -13,7 +13,7 @@ from src.agent.memory_integration import MemoryIntegration
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
-from src.agent.task import Task
+from src.agent.task import Task, TaskStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,9 +62,11 @@ class AgentLoop:
             )
 
         self.planner = planner or Planner()
+
         self.runtime = runtime or AgentRuntime(
             planner=self.planner,
         )
+
         self.policy = policy or AutonomyPolicy()
         self.memory = memory
         self.max_iterations = max_iterations
@@ -86,8 +88,11 @@ class AgentLoop:
 
         iterations = 0
         retry_count = 0
+
         last_result: ExecutionResult | None = None
         last_action = AutonomyAction.REPLAN
+
+        task.set_status(TaskStatus.PLANNING)
 
         while iterations < self.max_iterations:
             iterations += 1
@@ -97,10 +102,17 @@ class AgentLoop:
 
             if decision.action == AutonomyAction.COMPLETE:
                 if last_result is None:
+                    task.mark_running()
+
                     last_result = self.runtime.run(
                         task,
                         plan=context.plan,
                     )
+
+                if last_result.succeeded:
+                    task.mark_completed()
+                else:
+                    task.mark_failed()
 
                 return AgentLoopResult(
                     task_id=task.id,
@@ -111,10 +123,17 @@ class AgentLoop:
 
             if decision.action == AutonomyAction.STOP:
                 if last_result is None:
+                    task.mark_running()
+
                     last_result = self.runtime.run(
                         task,
                         plan=context.plan,
                     )
+
+                if last_result.succeeded:
+                    task.mark_completed()
+                else:
+                    task.mark_failed()
 
                 return AgentLoopResult(
                     task_id=task.id,
@@ -124,6 +143,8 @@ class AgentLoop:
                 )
 
             if decision.action == AutonomyAction.REPLAN:
+                task.mark_planning()
+
                 if self.memory is not None:
                     context = self.memory.enrich_context(context)
 
@@ -133,12 +154,17 @@ class AgentLoop:
                     plan = self.planner.plan(task)
 
                 context = context.with_plan(plan)
+                context = context.with_state("ready")
+
+                task.mark_ready()
                 retry_count = 0
 
                 continue
 
             if decision.action == AutonomyAction.RETRY:
                 if retry_count >= self.max_retries:
+                    task.mark_failed()
+
                     if last_result is None:
                         last_result = self.runtime.run(
                             task,
@@ -161,6 +187,9 @@ class AgentLoop:
                 AutonomyAction.EXECUTE,
                 AutonomyAction.RETRY,
             ):
+                task.mark_running()
+                context = context.with_state("running")
+
                 last_result = self.runtime.run(
                     task,
                     plan=context.plan,
@@ -178,18 +207,13 @@ class AgentLoop:
                             last_result.history
                         )
 
-                    context = self.memory.enrich_context(
-                        context
-                    )
+                    context = self.memory.enrich_context(context)
 
                 elif last_result.history is not None:
                     context = context.with_history(
                         last_result.history
                     )
 
-                # If the runtime did not provide history, construct the
-                # minimal history required by the autonomy layer so that
-                # subsequent decisions can observe the execution outcome.
                 if (
                     last_result.history is None
                     and context.plan is not None
@@ -221,10 +245,8 @@ class AgentLoop:
 
                     context = context.with_history(history)
 
-                # A successful runtime execution completes the loop
-                # immediately. This prevents a custom policy from
-                # unnecessarily requesting another execution after success.
                 if last_result.succeeded:
+                    task.mark_completed()
                     context = context.with_state("completed")
 
                     return AgentLoopResult(
@@ -234,15 +256,23 @@ class AgentLoop:
                         action=AutonomyAction.COMPLETE,
                     )
 
+                task.mark_failed()
                 context = context.with_state("running")
 
                 continue
 
         if last_result is None:
+            task.mark_running()
+
             last_result = self.runtime.run(
                 task,
                 plan=context.plan,
             )
+
+        if last_result.succeeded:
+            task.mark_completed()
+        else:
+            task.mark_failed()
 
         return AgentLoopResult(
             task_id=task.id,
