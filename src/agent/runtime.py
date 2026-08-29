@@ -10,7 +10,7 @@ from src.agent.control import (
     StepOutcome,
 )
 from src.agent.history import ExecutionHistory
-from src.agent.plan import ExecutionStep
+from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
 from src.agent.task import Task
@@ -22,7 +22,7 @@ StepExecutor = Callable[[ExecutionStep], None]
 
 
 class AgentRuntime:
-    """Orchestrates task planning, inference, tools, memory, and execution."""
+    """Orchestrates execution of agent plans."""
 
     def __init__(
         self,
@@ -51,11 +51,36 @@ class AgentRuntime:
         self.max_steps = max_steps
         self.controller = controller or ExecutionController()
 
-    def run(self, task: Task) -> ExecutionResult:
-        """Plan and execute a task, returning a structured result."""
+    def run(
+        self,
+        task: Task,
+        *,
+        plan: ExecutionPlan | None = None,
+    ) -> ExecutionResult:
+        """
+        Execute a task.
+
+        If an execution plan is supplied, that exact plan is executed.
+        Otherwise, the runtime creates a plan using the configured planner.
+
+        This allows AgentLoop to separate planning from execution while
+        preserving backward compatibility for callers that only provide
+        a Task.
+        """
 
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")
+
+        if plan is not None:
+            if not isinstance(plan, ExecutionPlan):
+                raise TypeError(
+                    "plan must be an ExecutionPlan or None"
+                )
+
+            if plan.task_id != task.id:
+                raise ValueError(
+                    "plan does not match the supplied task"
+                )
 
         task.mark_planning()
 
@@ -71,10 +96,11 @@ class AgentRuntime:
                 state="planning",
             )
 
-            plan = self._create_plan(
-                context=context,
-                task=task,
-            )
+            if plan is None:
+                plan = self._create_plan(
+                    context=context,
+                    task=task,
+                )
 
             task.mark_ready()
             task.mark_running()
@@ -146,11 +172,13 @@ class AgentRuntime:
                 executed_steps += 1
 
                 if decision == ControlDecision.STOP:
+                    task.mark_completed()
+                    context = context.with_state("completed")
                     break
 
-            task.mark_completed()
-
-            context = context.with_state("completed")
+            else:
+                task.mark_completed()
+                context = context.with_state("completed")
 
             return ExecutionResult(
                 task_id=task.id,
@@ -184,15 +212,10 @@ class AgentRuntime:
         self,
         context: AgentContext,
         task: Task,
-    ):
+    ) -> ExecutionPlan:
         """
-        Create a plan while supporting both the new
-        context-aware Planner and existing custom planners.
-
-        The built-in Planner receives AgentContext.
-
-        Existing test/custom planners that still accept
-        Task continue receiving Task.
+        Create a plan while supporting both the built-in context-aware
+        Planner and older custom planners.
         """
 
         if isinstance(self.planner, Planner):
@@ -259,6 +282,12 @@ class AgentRuntime:
         step: ExecutionStep,
     ) -> StepOutcome:
         """Execute one plan step through inference."""
+
+        if self.inference_provider is None:
+            return StepOutcome(
+                success=False,
+                error="no inference provider is configured",
+            )
 
         result = self.inference_provider.generate(
             InferenceRequest(

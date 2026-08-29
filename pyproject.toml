@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flop-agent"
+version = "0.2.0"
+description = "A context-aware autonomous agent runtime with memory, planning, execution control, and tool support."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+flop-agent = "src.agent.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

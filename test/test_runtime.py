@@ -717,3 +717,90 @@ def test_runtime_history_preserves_execution_order():
         record.decision == ControlDecision.CONTINUE
         for record in result.history.records
     )
+
+def test_runtime_executes_multi_step_plan_from_planner():
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="First step",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Second step",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(description="Execute a multi-step task")
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.executed_steps == 2
+
+    assert result.history is not None
+    assert result.history.record_count == 2
+
+    assert [
+        record.description
+        for record in result.history.records
+    ] == [
+        "First step",
+        "Second step",
+    ]
+
+def test_runtime_executes_multi_step_tool_and_inference_plan():
+    registry = ToolRegistry()
+    registry.register(ExampleTool())
+
+    class MultiStepPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Calculate 2 + 2",
+                        order=1,
+                        tool_name="calculator",
+                        tool_args={"expression": "2 + 2"},
+                    ),
+                    ExecutionStep(
+                        description="Explain the result",
+                        order=2,
+                    ),
+                ),
+            )
+
+    task = Task(
+        description="Calculate 2 + 2 and explain the result"
+    )
+
+    result = AgentRuntime(
+        planner=MultiStepPlanner(),
+        tool_registry=registry,
+        inference_provider=ExampleInferenceProvider(),
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.executed_steps == 2
+
+    assert result.output == (
+        "4\n"
+        "Generated: Explain the result"
+    )
+
+    assert result.history is not None
+    assert result.history.record_count == 2
+
+    assert result.history.records[0].output == "4"
+    assert result.history.records[1].output == (
+        "Generated: Explain the result"
+    )
