@@ -102,6 +102,11 @@ class AgentRuntime:
                     task=task,
                 )
 
+            if not isinstance(plan, ExecutionPlan):
+                raise TypeError(
+                    "planner must return an ExecutionPlan"
+                )
+
             task.mark_ready()
             task.mark_running()
 
@@ -119,7 +124,7 @@ class AgentRuntime:
 
                 outcome = self._execute_step(
                     step,
-                    context=context,
+                    context,
                 )
 
                 completed_at = datetime.now(timezone.utc)
@@ -175,13 +180,10 @@ class AgentRuntime:
                 executed_steps += 1
 
                 if decision == ControlDecision.STOP:
-                    task.mark_completed()
-                    context = context.with_state("completed")
                     break
 
-            else:
-                task.mark_completed()
-                context = context.with_state("completed")
+            task.mark_completed()
+            context = context.with_state("completed")
 
             return ExecutionResult(
                 task_id=task.id,
@@ -229,10 +231,9 @@ class AgentRuntime:
     def _execute_step(
         self,
         step: ExecutionStep,
-        *,
         context: AgentContext,
     ) -> StepOutcome:
-        """Execute one plan step using the configured mechanism."""
+        """Execute one step using the configured mechanism."""
 
         try:
             if step.tool_name is not None:
@@ -241,7 +242,7 @@ class AgentRuntime:
             if self.inference_provider is not None:
                 return self._execute_inference_step(
                     step,
-                    context=context,
+                    context,
                 )
 
             self.step_executor(step)
@@ -288,7 +289,6 @@ class AgentRuntime:
     def _execute_inference_step(
         self,
         step: ExecutionStep,
-        *,
         context: AgentContext,
     ) -> StepOutcome:
         """Execute one plan step through inference."""
@@ -299,26 +299,20 @@ class AgentRuntime:
                 error="no inference provider is configured",
             )
 
-        inference_context = {
-            "task_id": str(context.task_id),
-            "task_description": context.task.description,
+        request_context = {
+            "task": context.task,
+            "task_id": context.task_id,
+            "plan": context.plan,
+            "history": context.history,
+            "memories": context.memories,
+            "agent_id": context.agent_id,
             "state": context.state,
-            "step_order": step.order,
         }
-
-        if context.plan is not None:
-            inference_context["plan"] = context.plan
-
-        if context.history is not None:
-            inference_context["history"] = context.history
-
-        if context.memories:
-            inference_context["memories"] = context.memories
 
         result = self.inference_provider.generate(
             InferenceRequest(
                 prompt=step.description,
-                context=inference_context,
+                context=request_context,
             )
         )
 
