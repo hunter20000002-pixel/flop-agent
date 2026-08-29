@@ -117,7 +117,10 @@ class AgentRuntime:
 
                 started_at = datetime.now(timezone.utc)
 
-                outcome = self._execute_step(step)
+                outcome = self._execute_step(
+                    step,
+                    context=context,
+                )
 
                 completed_at = datetime.now(timezone.utc)
 
@@ -226,15 +229,20 @@ class AgentRuntime:
     def _execute_step(
         self,
         step: ExecutionStep,
+        *,
+        context: AgentContext,
     ) -> StepOutcome:
-        """Execute one step using the configured mechanism."""
+        """Execute one plan step using the configured mechanism."""
 
         try:
             if step.tool_name is not None:
                 return self._execute_tool_step(step)
 
             if self.inference_provider is not None:
-                return self._execute_inference_step(step)
+                return self._execute_inference_step(
+                    step,
+                    context=context,
+                )
 
             self.step_executor(step)
 
@@ -280,6 +288,8 @@ class AgentRuntime:
     def _execute_inference_step(
         self,
         step: ExecutionStep,
+        *,
+        context: AgentContext,
     ) -> StepOutcome:
         """Execute one plan step through inference."""
 
@@ -289,9 +299,26 @@ class AgentRuntime:
                 error="no inference provider is configured",
             )
 
+        inference_context = {
+            "task_id": str(context.task_id),
+            "task_description": context.task.description,
+            "state": context.state,
+            "step_order": step.order,
+        }
+
+        if context.plan is not None:
+            inference_context["plan"] = context.plan
+
+        if context.history is not None:
+            inference_context["history"] = context.history
+
+        if context.memories:
+            inference_context["memories"] = context.memories
+
         result = self.inference_provider.generate(
             InferenceRequest(
                 prompt=step.description,
+                context=inference_context,
             )
         )
 
