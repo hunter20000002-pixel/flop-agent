@@ -166,9 +166,11 @@ class AgentLoop:
                     task.mark_failed()
 
                     if last_result is None:
-                        last_result = self.runtime.run(
-                            task,
-                            plan=context.plan,
+                        last_result = ExecutionResult(
+                            task_id=task.id,
+                            status=TaskStatus.FAILED,
+                            executed_steps=0,
+                            error="retry limit exceeded",
                         )
 
                     return AgentLoopResult(
