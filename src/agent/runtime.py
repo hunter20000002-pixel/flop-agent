@@ -3,6 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from src.agent.autonomy import (
+    AutonomyAction,
+    AutonomyDecision,
+    AutonomyPolicy,
+)
 from src.agent.context import AgentContext
 from src.agent.control import (
     ControlDecision,
@@ -32,6 +37,7 @@ class AgentRuntime:
         inference_provider: InferenceProvider | None = None,
         tool_registry: ToolRegistry | None = None,
         controller: ExecutionController | None = None,
+        autonomy_policy: AutonomyPolicy | None = None,
         max_steps: int = 100,
     ) -> None:
         self.planner = planner or Planner()
@@ -51,6 +57,13 @@ class AgentRuntime:
         self.max_steps = max_steps
         self.controller = controller or ExecutionController()
 
+        # Autonomy is opt-in.
+        #
+        # Existing AgentRuntime behavior remains unchanged when
+        # no autonomy policy is supplied.
+        self.autonomy_policy = autonomy_policy
+        self._autonomy_enabled = autonomy_policy is not None
+
     def run(
         self,
         task: Task,
@@ -63,9 +76,11 @@ class AgentRuntime:
         If an execution plan is supplied, that exact plan is executed.
         Otherwise, the runtime creates a plan using the configured planner.
 
-        This allows AgentLoop to separate planning from execution while
-        preserving backward compatibility for callers that only provide
-        a Task.
+        When an autonomy policy is explicitly supplied, it can request:
+        EXECUTE, RETRY, REPLAN, STOP, or COMPLETE.
+
+        Without an explicit autonomy policy, runtime preserves the
+        original deterministic execution behavior.
         """
 
         if not isinstance(task, Task):
@@ -113,12 +128,70 @@ class AgentRuntime:
             context = context.with_plan(plan)
             context = context.with_state("running")
 
-            for step in context.plan_steps:
+            step_index = 0
+
+            # When True, the next loop iteration executes the same step
+            # directly because the autonomy policy already authorized RETRY.
+            retry_pending = False
+
+            while step_index < len(context.plan_steps):
+                autonomy_decision: AutonomyDecision | None = None
+
+                # --------------------------------------------------
+                # AUTONOMY CONTROL
+                # --------------------------------------------------
+                if self._autonomy_enabled and not retry_pending:
+                    autonomy_decision = (
+                        self.autonomy_policy.decide(context)
+                    )
+
+                    if autonomy_decision.action == (
+                        AutonomyAction.COMPLETE
+                    ):
+                        break
+
+                    if autonomy_decision.action == (
+                        AutonomyAction.STOP
+                    ):
+                        break
+
+                    if autonomy_decision.action == (
+                        AutonomyAction.REPLAN
+                    ):
+                        plan = self._create_plan(
+                            context=context,
+                            task=task,
+                        )
+
+                        if not isinstance(plan, ExecutionPlan):
+                            raise TypeError(
+                                "planner must return an ExecutionPlan"
+                            )
+
+                        context = context.with_plan(plan)
+                        step_index = 0
+                        retry_pending = False
+                        continue
+
+                    if autonomy_decision.action not in {
+                        AutonomyAction.EXECUTE,
+                        AutonomyAction.RETRY,
+                    }:
+                        raise RuntimeError(
+                            "unsupported autonomy action: "
+                            f"{autonomy_decision.action}"
+                        )
+
+                # --------------------------------------------------
+                # STEP LIMIT
+                # --------------------------------------------------
                 if executed_steps >= self.max_steps:
                     raise RuntimeError(
                         f"execution step limit exceeded: "
                         f"{self.max_steps}"
                     )
+
+                step = context.plan_steps[step_index]
 
                 started_at = datetime.now(timezone.utc)
 
@@ -144,6 +217,17 @@ class AgentRuntime:
                     ),
                 }
 
+                if autonomy_decision is not None:
+                    metadata["autonomy_action"] = (
+                        autonomy_decision.action.value
+                    )
+                    metadata["autonomy_reason"] = (
+                        autonomy_decision.reason
+                    )
+
+                if retry_pending:
+                    metadata["retry"] = True
+
                 if step.tool_name is not None:
                     metadata["tool_name"] = step.tool_name
 
@@ -155,6 +239,9 @@ class AgentRuntime:
                         self.inference_provider.name
                     )
 
+                # --------------------------------------------------
+                # RECORD EXECUTION
+                # --------------------------------------------------
                 history = history.record(
                     step,
                     success=outcome.success,
@@ -171,16 +258,83 @@ class AgentRuntime:
                 if outcome.output is not None:
                     outputs.append(str(outcome.output))
 
+                # The retry has now actually been attempted.
+                retry_pending = False
+
+                # --------------------------------------------------
+                # FAILURE
+                # --------------------------------------------------
                 if decision == ControlDecision.FAIL:
+
+                    # Without an explicitly configured autonomy
+                    # policy, preserve the original behavior:
+                    # failure immediately fails the task.
+                    if not self._autonomy_enabled:
+                        raise RuntimeError(
+                            outcome.error
+                            or "execution step failed"
+                        )
+
+                    # Autonomy is enabled. Ask the policy what to do
+                    # with the failed execution.
+                    retry_decision = (
+                        self.autonomy_policy.decide(context)
+                    )
+
+                    if retry_decision.action == (
+                        AutonomyAction.RETRY
+                    ):
+                        # Retry the SAME step on the next iteration.
+                        #
+                        # Important: do not ask the autonomy policy again
+                        # before that retry. The policy has already made
+                        # the RETRY decision.
+                        retry_pending = True
+                        continue
+
+                    if retry_decision.action == (
+                        AutonomyAction.REPLAN
+                    ):
+                        plan = self._create_plan(
+                            context=context,
+                            task=task,
+                        )
+
+                        if not isinstance(plan, ExecutionPlan):
+                            raise TypeError(
+                                "planner must return an ExecutionPlan"
+                            )
+
+                        context = context.with_plan(plan)
+                        step_index = 0
+                        retry_pending = False
+                        continue
+
+                    if retry_decision.action == (
+                        AutonomyAction.STOP
+                    ):
+                        break
+
+                    if retry_decision.action == (
+                        AutonomyAction.COMPLETE
+                    ):
+                        break
+
                     raise RuntimeError(
                         outcome.error
                         or "execution step failed"
                     )
 
+                # --------------------------------------------------
+                # SUCCESS / STOP
+                # --------------------------------------------------
                 executed_steps += 1
 
                 if decision == ControlDecision.STOP:
                     break
+
+                # Move to the next plan step.
+                step_index += 1
 
             task.mark_completed()
             context = context.with_state("completed")
