@@ -14,7 +14,7 @@ from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
 from src.agent.task import Task, TaskStatus
-
+from src.tools.builtin import create_builtin_registry
 
 @dataclass(frozen=True, slots=True)
 class AgentLoopResult:
@@ -65,6 +65,7 @@ class AgentLoop:
 
         self.runtime = runtime or AgentRuntime(
             planner=self.planner,
+            tool_registry=create_builtin_registry(),
         )
 
         self.policy = policy or AutonomyPolicy()

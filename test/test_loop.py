@@ -299,3 +299,24 @@ def test_agent_loop_stops_after_retry_limit():
     assert result.result is failed_result
     assert result.action == AutonomyAction.STOP
     assert result.result.failed
+
+def test_agent_loop_executes_calculator_tool():
+    task = Task(
+        description="Calculate 12 * 8"
+    )
+
+    result = AgentLoop().run(task)
+
+    assert result.result.succeeded
+    assert result.result.output == "96"
+
+
+def test_agent_loop_executes_filesystem_tool():
+    task = Task(
+        description="List the directory C:\\Users"
+    )
+
+    result = AgentLoop().run(task)
+
+    assert result.result.succeeded
+    assert result.result.output is not None
