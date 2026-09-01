@@ -28,7 +28,18 @@ class ObservedTaskData:
 
 
 class TechnocoreTaskSource:
-    """Discovers executable tasks from Technocore observations."""
+    """Discovers executable tasks from Technocore observations.
+
+    The source uses at-least-once delivery semantics.
+
+    The observation cursor is never advanced past an unprocessed
+    actionable message. This ensures that tasks which fail during
+    execution or publishing remain discoverable on the next poll.
+
+    Processed message IDs are persisted when a checkpoint store is
+    configured. Without a checkpoint store, processed IDs are retained
+    in memory for the lifetime of this source instance.
+    """
 
     def __init__(
         self,
@@ -84,6 +95,8 @@ class TechnocoreTaskSource:
             else f"technocore:{room}"
         )
 
+        self._processed_message_ids: set[int] = set()
+
         if checkpoint_store is None:
             self.since = since
         else:
@@ -96,8 +109,12 @@ class TechnocoreTaskSource:
         """
         Observe Technocore and return newly discovered actionable tasks.
 
-        The observation cursor records the newest message seen during the
-        poll. Task completion is tracked separately through mark_processed().
+        The cursor only advances past messages that are safe to forget:
+        non-actionable messages and already-processed actionable messages.
+
+        An unprocessed actionable message acts as a delivery barrier.
+        The cursor remains immediately before the earliest such message,
+        allowing failed tasks to be rediscovered on subsequent polls.
         """
 
         cursor = self.since
@@ -121,26 +138,21 @@ class TechnocoreTaskSource:
             return ()
 
         new_observations = tuple(
-            observation
-            for observation in observations
-            if observation.message_id > cursor
+            sorted(
+                (
+                    observation
+                    for observation in observations
+                    if observation.message_id > cursor
+                ),
+                key=lambda observation: observation.message_id,
+            )
         )
 
-        newest_message_id = max(
-            observation.message_id
-            for observation in observations
-        )
-
-        if newest_message_id > self.since:
-            self.since = newest_message_id
-
-            if self.checkpoint_store is not None:
-                self.checkpoint_store.set_since(
-                    self.checkpoint_source,
-                    self.since,
-                )
+        if not new_observations:
+            return ()
 
         actionable: list[ObservedTask] = []
+        earliest_pending_id: int | None = None
 
         for observation in new_observations:
             if not self._is_actionable(
@@ -148,18 +160,40 @@ class TechnocoreTaskSource:
             ):
                 continue
 
-            if self.checkpoint_store is not None:
-                if self.checkpoint_store.is_processed(
-                    self.checkpoint_source,
-                    observation.message_id,
-                ):
-                    continue
+            if self._is_processed(
+                observation.message_id
+            ):
+                continue
+
+            if earliest_pending_id is None:
+                earliest_pending_id = (
+                    observation.message_id
+                )
 
             actionable.append(
                 self._to_observed_task(
                     observation
                 )
             )
+
+        if earliest_pending_id is None:
+            newest_message_id = max(
+                observation.message_id
+                for observation in new_observations
+            )
+
+            self._advance_cursor(
+                newest_message_id
+            )
+        else:
+            safe_cursor = (
+                earliest_pending_id - 1
+            )
+
+            if safe_cursor > self.since:
+                self._advance_cursor(
+                    safe_cursor
+                )
 
         return tuple(actionable)
 
@@ -179,6 +213,10 @@ class TechnocoreTaskSource:
                 "message_id cannot be negative"
             )
 
+        self._processed_message_ids.add(
+            message_id
+        )
+
         if self.checkpoint_store is None:
             return
 
@@ -186,6 +224,40 @@ class TechnocoreTaskSource:
             self.checkpoint_source,
             message_id,
         )
+
+    def _is_processed(
+        self,
+        message_id: int,
+    ) -> bool:
+        """Return whether a message has already been acknowledged."""
+
+        if message_id in self._processed_message_ids:
+            return True
+
+        if self.checkpoint_store is None:
+            return False
+
+        return self.checkpoint_store.is_processed(
+            self.checkpoint_source,
+            message_id,
+        )
+
+    def _advance_cursor(
+        self,
+        since: int,
+    ) -> None:
+        """Advance and persist the observation cursor."""
+
+        if since <= self.since:
+            return
+
+        self.since = since
+
+        if self.checkpoint_store is not None:
+            self.checkpoint_store.set_since(
+                self.checkpoint_source,
+                self.since,
+            )
 
     @staticmethod
     def _parse_observations(

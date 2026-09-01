@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +6,7 @@ from pathlib import Path
 from src.agent.autonomous import AutonomousAgent, AutonomousRun
 from src.agent.checkpoint_store import SQLiteTaskCheckpointStore
 from src.agent.loop import AgentLoop
+from src.agent.publisher import TechnocoreResultPublisher
 from src.agent.task_source import TechnocoreTaskSource
 from src.config import Config, DEFAULT_CONFIG
 
@@ -19,6 +19,7 @@ class AutonomousRunner:
     task_source: TechnocoreTaskSource
     loop: AgentLoop
     checkpoint_store: SQLiteTaskCheckpointStore | None = None
+    publisher: TechnocoreResultPublisher | None = None
 
     @classmethod
     def create(
@@ -30,6 +31,8 @@ class AutonomousRunner:
         max_retries: int = 3,
         task_source: TechnocoreTaskSource | None = None,
         checkpoint_path: str | Path | None = None,
+        publisher: TechnocoreResultPublisher | None = None,
+        enable_publishing: bool = True,
     ) -> AutonomousRunner:
         """Create a fully configured autonomous FLOP runner."""
 
@@ -52,9 +55,18 @@ class AutonomousRunner:
             max_retries=max_retries,
         )
 
+        if (
+            publisher is None
+            and enable_publishing
+        ):
+            publisher = TechnocoreResultPublisher(
+                config=config,
+            )
+
         agent = AutonomousAgent(
             task_source=task_source,
             runtime=loop,
+            publisher=publisher,
         )
 
         return cls(
@@ -62,22 +74,18 @@ class AutonomousRunner:
             task_source=task_source,
             loop=loop,
             checkpoint_store=checkpoint_store,
+            publisher=publisher,
         )
 
     def run_once(self) -> AutonomousRun:
-        """Poll Technocore once and execute all discovered tasks."""
+        """
+        Poll Technocore once and execute all discovered tasks.
 
-        autonomous_run = self.agent.run_once()
+        The runner preserves the AutonomousAgent result contract
+        without transforming or unwrapping execution results.
+        """
 
-        results = tuple(
-            result.result
-            for result in autonomous_run.results
-        )
-
-        return AutonomousRun(
-            discovered=autonomous_run.discovered,
-            results=results,
-        )
+        return self.agent.run_once()
 
     def close(self) -> None:
         """Close persistent resources owned by the runner."""

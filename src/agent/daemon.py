@@ -91,10 +91,12 @@ class AutonomousDaemon:
     @property
     def running(self) -> bool:
         """Return True while the daemon is running."""
+
         return self._running
 
     def stop(self) -> None:
         """Request graceful shutdown."""
+
         self._running = False
 
     def run_cycle(self) -> DaemonCycle:
@@ -190,6 +192,7 @@ class AutonomousDaemon:
 
     def close(self) -> None:
         """Stop the daemon and close the underlying runner."""
+
         self.stop()
         self.runner.close()
 

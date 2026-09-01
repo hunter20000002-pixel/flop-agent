@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 
 from src.agent.decision import (
@@ -69,6 +69,7 @@ class AgentRuntime:
         task: Task,
         *,
         plan: ExecutionPlan | None = None,
+        allowed_capabilities: Iterable[str] | None = None,
     ) -> ExecutionResult:
         """
         Execute a task.
@@ -76,11 +77,23 @@ class AgentRuntime:
         If an execution plan is supplied, that exact plan is executed.
         Otherwise, the runtime creates a plan using the configured planner.
 
+        When allowed_capabilities is supplied, every execution step must
+        be authorized by that capability set before it can execute.
+
+        A capability set is intentionally expressed as tool names at the
+        runtime boundary. For example:
+
+            {"calculator"}
+
+        permits calculator tool steps only. Tool-less executor steps,
+        inference steps, and other tools are denied while a capability
+        restriction is active.
+
+        When allowed_capabilities is None, the runtime preserves its
+        existing behavior for locally invoked tasks.
+
         When an autonomy policy is explicitly supplied, it can request:
         EXECUTE, RETRY, REPLAN, STOP, or COMPLETE.
-
-        Without an explicit autonomy policy, runtime preserves the
-        original deterministic execution behavior.
         """
 
         if not isinstance(task, Task):
@@ -96,6 +109,10 @@ class AgentRuntime:
                 raise ValueError(
                     "plan does not match the supplied task"
                 )
+
+        normalized_capabilities = self._normalize_capabilities(
+            allowed_capabilities
+        )
 
         task.mark_planning()
 
@@ -121,6 +138,11 @@ class AgentRuntime:
                 raise TypeError(
                     "planner must return an ExecutionPlan"
                 )
+
+            self._validate_plan_capabilities(
+                plan,
+                normalized_capabilities,
+            )
 
             task.mark_ready()
             task.mark_running()
@@ -168,6 +190,11 @@ class AgentRuntime:
                                 "planner must return an ExecutionPlan"
                             )
 
+                        self._validate_plan_capabilities(
+                            plan,
+                            normalized_capabilities,
+                        )
+
                         context = context.with_plan(plan)
                         step_index = 0
                         retry_pending = False
@@ -192,6 +219,14 @@ class AgentRuntime:
                     )
 
                 step = context.plan_steps[step_index]
+
+                # Defense-in-depth: validate the individual step again
+                # immediately before execution. This protects the
+                # execution boundary even if context/plan state changes.
+                self._validate_step_capability(
+                    step,
+                    normalized_capabilities,
+                )
 
                 started_at = datetime.now(timezone.utc)
 
@@ -305,6 +340,11 @@ class AgentRuntime:
                                 "planner must return an ExecutionPlan"
                             )
 
+                        self._validate_plan_capabilities(
+                            plan,
+                            normalized_capabilities,
+                        )
+
                         context = context.with_plan(plan)
                         step_index = 0
                         retry_pending = False
@@ -381,6 +421,81 @@ class AgentRuntime:
             return self.planner.plan(context)
 
         return self.planner.plan(task)
+
+    @staticmethod
+    def _normalize_capabilities(
+        allowed_capabilities: Iterable[str] | None,
+    ) -> frozenset[str] | None:
+        """
+        Normalize an optional capability collection.
+
+        None means unrestricted local execution.
+
+        An empty collection means explicitly no capabilities are
+        authorized.
+        """
+
+        if allowed_capabilities is None:
+            return None
+
+        capabilities = frozenset(
+            str(capability).strip().lower()
+            for capability in allowed_capabilities
+        )
+
+        if any(not capability for capability in capabilities):
+            raise ValueError(
+                "allowed capabilities cannot contain empty names"
+            )
+
+        return capabilities
+
+    @classmethod
+    def _validate_plan_capabilities(
+        cls,
+        plan: ExecutionPlan,
+        allowed_capabilities: frozenset[str] | None,
+    ) -> None:
+        """Reject any plan containing an unauthorized execution step."""
+
+        if allowed_capabilities is None:
+            return
+
+        for step in plan.steps:
+            cls._validate_step_capability(
+                step,
+                allowed_capabilities,
+            )
+
+    @staticmethod
+    def _validate_step_capability(
+        step: ExecutionStep,
+        allowed_capabilities: frozenset[str] | None,
+    ) -> None:
+        """
+        Enforce capability authorization for one execution step.
+
+        A restricted execution context permits only explicitly named
+        tools. Non-tool execution is denied because it has no capability
+        mapping and therefore cannot be safely authorized.
+        """
+
+        if allowed_capabilities is None:
+            return
+
+        if step.tool_name is None:
+            raise PermissionError(
+                "execution step is not authorized by the active "
+                "capability set: no tool capability is declared"
+            )
+
+        tool_name = step.tool_name.strip().lower()
+
+        if tool_name not in allowed_capabilities:
+            raise PermissionError(
+                f"tool '{step.tool_name}' is not authorized by the "
+                "active capability set"
+            )
 
     def _execute_step(
         self,

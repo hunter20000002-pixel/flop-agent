@@ -41,6 +41,7 @@ class RecordingRuntime:
         results: list[ExecutionResult] | None = None,
     ) -> None:
         self.received_plan: ExecutionPlan | None = None
+        self.received_capabilities = None
         self.calls = 0
         self.results = results or []
 
@@ -49,9 +50,11 @@ class RecordingRuntime:
         task: Task,
         *,
         plan: ExecutionPlan | None = None,
+        allowed_capabilities=None,
     ) -> ExecutionResult:
         self.calls += 1
         self.received_plan = plan
+        self.received_capabilities = allowed_capabilities
 
         if self.results:
             return self.results.pop(0)
@@ -299,6 +302,7 @@ def test_agent_loop_stops_after_retry_limit():
     assert result.result is failed_result
     assert result.action == AutonomyAction.STOP
     assert result.result.failed
+
 
 def test_agent_loop_executes_calculator_tool():
     task = Task(
