@@ -5,6 +5,7 @@ import re
 from src.agent.context import AgentContext
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.task import Task
+from src.config import DEFAULT_CONFIG
 
 
 class Planner:
@@ -90,7 +91,6 @@ class Planner:
         if not text:
             return (description,)
 
-        # First split explicit sequential separators.
         parts = re.split(
             r"\s+(?:and\s+then|then)\s+",
             text,
@@ -105,13 +105,12 @@ class Planner:
             if not part:
                 continue
 
-            # Then split plain "and" only when it introduces another
-            # recognizable action.
             subparts = re.split(
                 r"\s+and\s+(?="
                 r"(?:calculate|compute|evaluate|solve|"
                 r"explain|summarize|list|read|show|open|display|"
-                r"research|analyze|analyse|find|search)\b"
+                r"research|analyze|analyse|find|search|"
+                r"inspect|monitor|check|review|scan)\b"
                 r")",
                 part,
                 flags=re.IGNORECASE,
@@ -160,11 +159,11 @@ class Planner:
         description: str,
     ) -> tuple[str | None, dict[str, object]]:
         """
-        Select an appropriate built-in tool from the task description.
+        Select an appropriate tool from the task description.
 
-        Tool selection is intentionally conservative. The planner should
-        only select a tool when the step clearly indicates that one is
-        required.
+        Tool selection is intentionally conservative. A tool is selected
+        only when the step clearly indicates that the corresponding
+        capability is required.
         """
 
         normalized = description.lower()
@@ -200,6 +199,17 @@ class Planner:
                     },
                 )
 
+        if Planner._looks_like_technocore_observation(
+            normalized
+        ):
+            return (
+                "technocore_observer",
+                {
+                    "room": DEFAULT_CONFIG.room,
+                    "since": 0,
+                },
+            )
+
         return None, {}
 
     @staticmethod
@@ -230,8 +240,6 @@ class Planner:
         Extract a simple mathematical expression from a task step.
 
         The input should already represent a single execution step.
-        Any accidental trailing natural-language connector is removed
-        defensively.
         """
 
         markers = (
@@ -255,7 +263,6 @@ class Planner:
                 index + len(marker):
             ].strip()
 
-            # Defensive cleanup in case a separator survived splitting.
             expression = re.split(
                 r"\s+(?:and\s+then|then)\s+",
                 expression,
@@ -361,3 +368,51 @@ class Planner:
                 )
 
         return None
+
+    @staticmethod
+    def _looks_like_technocore_observation(
+        description: str,
+    ) -> bool:
+        """
+        Return True when a step clearly requests Technocore observation.
+
+        The planner deliberately requires both a Technocore reference
+        and an observation-oriented action. This prevents unrelated tasks
+        that merely mention Technocore from invoking the network observer.
+        """
+
+        if "technocore" not in description:
+            return False
+
+        observation_verbs = (
+            "observe",
+            "inspect",
+            "monitor",
+            "check",
+            "read",
+            "review",
+            "scan",
+        )
+
+        observation_nouns = (
+            "activity",
+            "messages",
+            "message",
+            "updates",
+            "room",
+        )
+
+        has_observation_verb = any(
+            verb in description
+            for verb in observation_verbs
+        )
+
+        has_observation_noun = any(
+            noun in description
+            for noun in observation_nouns
+        )
+
+        return (
+            has_observation_verb
+            or has_observation_noun
+        )

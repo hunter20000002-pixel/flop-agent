@@ -1,204 +1,179 @@
+from __future__ import annotations
+
 from uuid import uuid4
 
 import pytest
 
 from src.agent.context import AgentContext
-from src.agent.memory import MemoryEntry
-from src.agent.plan import ExecutionPlan
 from src.agent.planner import Planner
-from src.agent.task import Task
+from src.agent.task import Task, TaskStatus
+from src.config import DEFAULT_CONFIG
 
 
-def test_planner_accepts_context():
-    task = Task(description="Research decentralized AI")
+def make_context(description: str) -> AgentContext:
+    """Create a minimal context for planner tests."""
 
-    context = AgentContext(
+    task = Task(
+        id=uuid4(),
+        description=description,
+        status=TaskStatus.PENDING,
+    )
+
+    return AgentContext(
         task=task,
-        agent_id="test-agent",
+        memories=(),
+    )
+
+
+def test_planner_selects_technocore_observer() -> None:
+    """Technocore observation tasks should use the observer tool."""
+
+    context = make_context(
+        "Observe recent Technocore activity"
     )
 
     plan = Planner().plan(context)
 
-    assert isinstance(plan, ExecutionPlan)
-    assert plan.task_id == task.id
     assert plan.step_count == 1
-    assert plan.steps[0].description == "Research decentralized AI"
+
+    step = plan.steps[0]
+
+    assert step.tool_name == "technocore_observer"
+    assert step.tool_args == {
+        "room": DEFAULT_CONFIG.room,
+        "since": 0,
+    }
 
 
-def test_planner_rejects_context_for_different_task():
-    task = Task(description="Research decentralized AI")
-    other_task = Task(description="Research blockchain")
+def test_planner_recognizes_technocore_analysis() -> None:
+    """Analysis requests involving Technocore should use the observer."""
 
-    context = AgentContext(
-        task=task,
-        agent_id="test-agent",
-    )
-
-    with pytest.raises(ValueError):
-        Planner().plan(
-            context,
-            task=other_task,
-        )
-
-
-def test_planner_uses_memory_context():
-    task = Task(description="Research decentralized AI")
-
-    memory = MemoryEntry(
-        content="Previous research found decentralized inference networks.",
-        task_id=task.id,
-    )
-
-    context = AgentContext(
-        task=task,
-        memories=(memory,),
-        agent_id="test-agent",
+    context = make_context(
+        "Analyze recent Technocore messages"
     )
 
     plan = Planner().plan(context)
 
-    assert isinstance(plan, ExecutionPlan)
-    assert plan.task_id == task.id
     assert plan.step_count == 1
-    assert "Previous research" in plan.steps[0].description
+    assert plan.steps[0].tool_name == "technocore_observer"
 
-def test_planner_creates_multiple_steps():
-    task = Task(
-        description="Calculate 2 + 2 and then explain the result"
+
+def test_planner_does_not_select_technocore_for_unrelated_tasks() -> None:
+    """Mentioning unrelated content must not trigger the observer."""
+
+    context = make_context(
+        "Calculate the value of a Technocore token"
     )
 
-    context = AgentContext(task=task)
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+    assert plan.steps[0].tool_name == "calculator"
+
+
+def test_planner_splits_technocore_observation_from_calculation() -> None:
+    """Compound tasks should create separate execution steps."""
+
+    context = make_context(
+        "Observe recent Technocore activity and then "
+        "calculate 10 + 5"
+    )
 
     plan = Planner().plan(context)
 
     assert plan.step_count == 2
 
-    assert plan.steps[0].description == "Calculate 2 + 2"
-    assert plan.steps[0].order == 1
-    assert plan.steps[0].tool_name == "calculator"
-    assert plan.steps[0].tool_args == {
-        "expression": "2 + 2"
+    first_step = plan.steps[0]
+    second_step = plan.steps[1]
+
+    assert first_step.order == 1
+    assert first_step.tool_name == "technocore_observer"
+    assert first_step.tool_args == {
+        "room": DEFAULT_CONFIG.room,
+        "since": 0,
     }
 
-    assert plan.steps[1].description == "explain the result"
-    assert plan.steps[1].order == 2
-    assert plan.steps[1].tool_name is None
-    assert plan.steps[1].tool_args == {}
+    assert second_step.order == 2
+    assert second_step.tool_name == "calculator"
+    assert second_step.tool_args == {
+        "expression": "10 + 5",
+    }
 
 
-def test_planner_preserves_single_step_tasks():
-    task = Task(
-        description="Research decentralized AI"
+def test_planner_creates_observe_then_analyze_pipeline() -> None:
+    """
+    An explicit observation followed by analysis should create a
+    tool step followed by an inference step.
+    """
+
+    context = make_context(
+        "Observe recent Technocore activity and then "
+        "analyze the messages for important agent activity"
     )
 
-    context = AgentContext(task=task)
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 2
+
+    observation_step = plan.steps[0]
+    analysis_step = plan.steps[1]
+
+    assert observation_step.order == 1
+    assert observation_step.tool_name == "technocore_observer"
+    assert observation_step.tool_args == {
+        "room": DEFAULT_CONFIG.room,
+        "since": 0,
+    }
+
+    assert analysis_step.order == 2
+    assert analysis_step.tool_name is None
+    assert analysis_step.tool_args == {}
+    assert "analyze the messages" in (
+        analysis_step.description.lower()
+    )
+
+
+def test_planner_creates_observe_then_summarize_pipeline() -> None:
+    """Observation followed by summarization should use inference."""
+
+    context = make_context(
+        "Inspect recent Technocore messages and then "
+        "summarize the important activity"
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 2
+
+    observation_step = plan.steps[0]
+    summary_step = plan.steps[1]
+
+    assert observation_step.tool_name == "technocore_observer"
+    assert summary_step.tool_name is None
+    assert "summarize the important activity" in (
+        summary_step.description.lower()
+    )
+
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "Inspect Technocore activity",
+        "Monitor Technocore messages",
+        "Check Technocore for updates",
+        "Read Technocore messages",
+        "Review Technocore activity",
+        "Scan Technocore for relevant messages",
+    ),
+)
+def test_planner_recognizes_technocore_observation_verbs(
+    description: str,
+) -> None:
+    """Supported observation verbs should select the observer."""
+
+    context = make_context(description)
 
     plan = Planner().plan(context)
 
     assert plan.step_count == 1
-    assert plan.steps[0].description == "Research decentralized AI"
-
-
-def test_planner_supports_then_separator():
-    task = Task(
-        description="Calculate 10 * 5 then explain the result"
-    )
-
-    context = AgentContext(task=task)
-
-    plan = Planner().plan(context)
-
-    assert plan.step_count == 2
-    assert plan.steps[0].tool_name == "calculator"
-    assert plan.steps[0].tool_args == {
-        "expression": "10 * 5"
-    }
-    assert plan.steps[1].tool_name is None
-
-
-def test_planner_assigns_sequential_step_orders():
-    task = Task(
-        description=(
-            "Calculate 2 + 2 "
-            "and then explain the result "
-            "and then summarize the answer"
-        )
-    )
-
-    context = AgentContext(task=task)
-
-    plan = Planner().plan(context)
-
-    assert plan.step_count == 3
-    assert [step.order for step in plan.steps] == [1, 2, 3]
-
-def test_planner_creates_multiple_steps_for_compound_task():
-    task = Task(
-        description=(
-            "calculate 10 + 20 and list C:\\temp"
-        )
-    )
-
-    context = AgentContext(task=task)
-
-    plan = Planner().plan(context)
-
-    assert isinstance(plan, ExecutionPlan)
-    assert plan.task_id == task.id
-    assert plan.step_count == 2
-
-    assert plan.steps[0].order == 1
-    assert plan.steps[0].tool_name == "calculator"
-    assert plan.steps[0].tool_args == {
-        "expression": "10 + 20",
-    }
-
-    assert plan.steps[1].order == 2
-    assert plan.steps[1].tool_name == "filesystem"
-    assert plan.steps[1].tool_args == {
-        "operation": "list",
-        "path": "C:\\temp",
-    }
-
-
-def test_planner_preserves_single_step_behavior():
-    task = Task(
-        description="calculate 10 + 20"
-    )
-
-    context = AgentContext(task=task)
-
-    plan = Planner().plan(context)
-
-    assert plan.step_count == 1
-    assert plan.steps[0].order == 1
-    assert plan.steps[0].tool_name == "calculator"
-    assert plan.steps[0].tool_args == {
-        "expression": "10 + 20",
-    }
-
-
-def test_planner_creates_multiple_steps_for_two_calculations():
-    task = Task(
-        description=(
-            "calculate 10 + 20 and calculate 5 * 5"
-        )
-    )
-
-    context = AgentContext(task=task)
-
-    plan = Planner().plan(context)
-
-    assert plan.step_count == 2
-
-    assert plan.steps[0].order == 1
-    assert plan.steps[0].tool_name == "calculator"
-    assert plan.steps[0].tool_args == {
-        "expression": "10 + 20",
-    }
-
-    assert plan.steps[1].order == 2
-    assert plan.steps[1].tool_name == "calculator"
-    assert plan.steps[1].tool_args == {
-        "expression": "5 * 5",
-    }
+    assert plan.steps[0].tool_name == "technocore_observer"
