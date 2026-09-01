@@ -55,6 +55,11 @@ class Planner:
                 step_description
             )
 
+            self._authorize_tool(
+                tool_name,
+                context.allowed_capabilities,
+            )
+
             steps.append(
                 ExecutionStep(
                     description=enriched_description,
@@ -68,6 +73,29 @@ class Planner:
             task_id=current_task.id,
             steps=tuple(steps),
         )
+
+    @staticmethod
+    def _authorize_tool(
+        tool_name: str | None,
+        allowed_capabilities: frozenset[str] | None,
+    ) -> None:
+        """
+        Ensure a selected tool is authorized by the planning context.
+
+        ``None`` means unrestricted planning.
+
+        When a capability set is supplied, tool names use the same
+        string capability identifiers enforced by AgentRuntime.
+        """
+
+        if tool_name is None or allowed_capabilities is None:
+            return
+
+        if tool_name not in allowed_capabilities:
+            raise PermissionError(
+                f"tool '{tool_name}' requires capability "
+                f"'{tool_name}', which is not authorized"
+            )
 
     @staticmethod
     def _split_into_steps(

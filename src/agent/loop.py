@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -83,13 +82,21 @@ class AgentLoop:
         """
         Run the autonomous loop for a task.
 
-        ``allowed_capabilities`` is propagated unchanged to every runtime
-        execution so externally qualified tasks remain inside their
-        authorized capability boundary.
+        ``allowed_capabilities`` is normalized once and carried inside
+        the immutable AgentContext so planning and execution share the
+        same authorization boundary.
+
+        ``None`` preserves unrestricted local execution.
         """
 
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")
+
+        capabilities = (
+            None
+            if allowed_capabilities is None
+            else frozenset(allowed_capabilities)
+        )
 
         context = AgentContext(
             task=task,
@@ -99,6 +106,7 @@ class AgentLoop:
                 else None
             ),
             state="idle",
+            allowed_capabilities=capabilities,
         )
 
         if self.memory is not None:
@@ -125,7 +133,7 @@ class AgentLoop:
                     result=last_result,
                     iterations=iterations,
                     action=AutonomyAction.COMPLETE,
-                    allowed_capabilities=allowed_capabilities,
+                    allowed_capabilities=capabilities,
                 )
 
             if decision.action == AutonomyAction.STOP:
@@ -135,7 +143,7 @@ class AgentLoop:
                     result=last_result,
                     iterations=iterations,
                     action=AutonomyAction.STOP,
-                    allowed_capabilities=allowed_capabilities,
+                    allowed_capabilities=capabilities,
                 )
 
             if decision.action == AutonomyAction.REPLAN:
@@ -169,7 +177,7 @@ class AgentLoop:
                         result=last_result,
                         iterations=iterations,
                         action=AutonomyAction.STOP,
-                        allowed_capabilities=allowed_capabilities,
+                        allowed_capabilities=capabilities,
                     )
 
                 retry_count += 1
@@ -186,7 +194,7 @@ class AgentLoop:
             task.mark_running()
             context = context.with_state("running")
 
-            if allowed_capabilities is None:
+            if capabilities is None:
                 last_result = self.runtime.run(
                     task,
                     plan=context.plan,
@@ -195,7 +203,7 @@ class AgentLoop:
                 last_result = self.runtime.run(
                     task,
                     plan=context.plan,
-                    allowed_capabilities=allowed_capabilities,
+                    allowed_capabilities=capabilities,
                 )
 
             context = self._update_context_after_execution(
@@ -225,7 +233,7 @@ class AgentLoop:
             result=last_result,
             iterations=iterations,
             action=last_action,
-            allowed_capabilities=allowed_capabilities,
+            allowed_capabilities=capabilities,
         )
 
     def _create_plan(
@@ -313,7 +321,7 @@ class AgentLoop:
         result: ExecutionResult | None,
         iterations: int,
         action: AutonomyAction,
-        allowed_capabilities: Iterable[str] | None,
+        allowed_capabilities: frozenset[str] | None,
     ) -> AgentLoopResult:
         """Finalize the loop with a valid execution result."""
 

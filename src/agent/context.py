@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -19,6 +20,7 @@ class AgentContext:
     memories: tuple[MemoryEntry, ...] = ()
     agent_id: str | None = None
     state: str = "idle"
+    allowed_capabilities: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.task, Task):
@@ -61,6 +63,26 @@ class AgentContext:
 
         if not self.state.strip():
             raise ValueError("state must not be empty")
+
+        if self.allowed_capabilities is not None:
+            if not isinstance(
+                self.allowed_capabilities,
+                frozenset,
+            ):
+                raise TypeError(
+                    "allowed_capabilities must be a frozenset or None"
+                )
+
+            for capability in self.allowed_capabilities:
+                if not isinstance(capability, str):
+                    raise TypeError(
+                        "allowed_capabilities must contain only strings"
+                    )
+
+                if not capability.strip():
+                    raise ValueError(
+                        "allowed_capabilities cannot contain empty strings"
+                    )
 
     @property
     def task_id(self) -> UUID:
@@ -166,6 +188,7 @@ class AgentContext:
             memories=self.memories,
             agent_id=self.agent_id,
             state=self.state,
+            allowed_capabilities=self.allowed_capabilities,
         )
 
     def with_history(
@@ -181,6 +204,7 @@ class AgentContext:
             memories=self.memories,
             agent_id=self.agent_id,
             state=self.state,
+            allowed_capabilities=self.allowed_capabilities,
         )
 
     def with_memories(
@@ -196,6 +220,7 @@ class AgentContext:
             memories=memories,
             agent_id=self.agent_id,
             state=self.state,
+            allowed_capabilities=self.allowed_capabilities,
         )
 
     def with_state(
@@ -211,4 +236,27 @@ class AgentContext:
             memories=self.memories,
             agent_id=self.agent_id,
             state=state,
+            allowed_capabilities=self.allowed_capabilities,
+        )
+
+    def with_allowed_capabilities(
+        self,
+        capabilities: Iterable[str] | None,
+    ) -> AgentContext:
+        """Return a new context with updated capability authorization."""
+
+        normalized = (
+            None
+            if capabilities is None
+            else frozenset(capabilities)
+        )
+
+        return AgentContext(
+            task=self.task,
+            plan=self.plan,
+            history=self.history,
+            memories=self.memories,
+            agent_id=self.agent_id,
+            state=self.state,
+            allowed_capabilities=normalized,
         )
