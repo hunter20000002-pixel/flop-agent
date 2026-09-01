@@ -30,6 +30,11 @@ StepExecutor = Callable[[ExecutionStep], None]
 class AgentRuntime:
     """Orchestrates execution of agent plans."""
 
+    TOOL_CAPABILITIES = {
+        "calculator": "calculator",
+        "filesystem": "filesystem",
+    }
+
     def __init__(
         self,
         planner: Planner | None = None,
@@ -123,6 +128,7 @@ class AgentRuntime:
                 task=task,
                 history=history,
                 state="planning",
+                allowed_capabilities=capabilities,
             )
 
             if plan is None:
@@ -249,14 +255,11 @@ class AgentRuntime:
 
                 metadata = {
                     "step_order": step.order,
-                    "execution_mode": (
-                        "tool"
-                        if step.tool_name is not None
-                        else (
-                            "inference"
-                            if self.inference_provider is not None
-                            else "executor"
-                        )
+                    "execution_mode": self._execution_mode(
+                        step,
+                        has_inference_provider=(
+                            self.inference_provider is not None
+                        ),
                     ),
                 }
 
@@ -271,6 +274,11 @@ class AgentRuntime:
                 if step.tool_name is not None:
                     metadata["tool_name"] = step.tool_name
 
+                if capabilities is not None:
+                    metadata["allowed_capabilities"] = tuple(
+                        sorted(capabilities)
+                    )
+
                 if (
                     self.inference_provider is not None
                     and step.tool_name is None
@@ -278,6 +286,8 @@ class AgentRuntime:
                     metadata["provider"] = (
                         self.inference_provider.name
                     )
+
+                capability = self._capability_for_step(step)
 
                 # --------------------------------------------------
                 # RECORD EXECUTION
@@ -291,6 +301,7 @@ class AgentRuntime:
                     started_at=started_at,
                     completed_at=completed_at,
                     metadata=metadata,
+                    capability=capability,
                 )
 
                 context = context.with_history(history)
@@ -505,8 +516,39 @@ class AgentRuntime:
                 error=str(exc),
             )
 
+    @classmethod
+    def _capability_for_step(
+        cls,
+        step: ExecutionStep,
+    ) -> str | None:
+        """Return the capability required by a step, if any."""
+
+        if step.tool_name is None:
+            return None
+
+        return cls.TOOL_CAPABILITIES.get(
+            step.tool_name
+        )
+
     @staticmethod
+    def _execution_mode(
+        step: ExecutionStep,
+        *,
+        has_inference_provider: bool,
+    ) -> str:
+        """Return the mechanism used to execute a step."""
+
+        if step.tool_name is not None:
+            return "tool"
+
+        if has_inference_provider:
+            return "inference"
+
+        return "executor"
+
+    @classmethod
     def _require_tool_capability(
+        cls,
         tool_name: str,
         allowed_capabilities: frozenset[str] | None,
     ) -> None:
@@ -521,10 +563,9 @@ class AgentRuntime:
         if allowed_capabilities is None:
             return
 
-        capability = {
-            "calculator": "calculator",
-            "filesystem": "filesystem",
-        }.get(tool_name)
+        capability = cls.TOOL_CAPABILITIES.get(
+            tool_name
+        )
 
         if capability is None:
             raise RuntimeError(

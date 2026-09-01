@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID, uuid4
 
-from types import MappingProxyType
-from collections.abc import Mapping
-
 from src.agent.control import ControlDecision
 from src.agent.plan import ExecutionStep
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionRecord:
@@ -22,6 +22,7 @@ class ExecutionRecord:
     error: str | None = None
     decision: ControlDecision = ControlDecision.CONTINUE
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    capability: str | None = None
     started_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -56,6 +57,17 @@ class ExecutionRecord:
             raise TypeError(
                 "decision must be a ControlDecision"
             )
+
+        if self.capability is not None:
+            if not isinstance(self.capability, str):
+                raise TypeError(
+                    "capability must be a string or None"
+                )
+
+            if not self.capability.strip():
+                raise ValueError(
+                    "capability must not be empty"
+                )
 
         if not isinstance(self.started_at, datetime):
             raise TypeError("started_at must be a datetime")
@@ -122,7 +134,9 @@ class ExecutionHistory:
         return self.records[-1]
 
     @property
-    def successful_records(self) -> tuple[ExecutionRecord, ...]:
+    def successful_records(
+        self,
+    ) -> tuple[ExecutionRecord, ...]:
         """Return all successful execution records in execution order."""
 
         return tuple(
@@ -132,7 +146,9 @@ class ExecutionHistory:
         )
 
     @property
-    def failed_records(self) -> tuple[ExecutionRecord, ...]:
+    def failed_records(
+        self,
+    ) -> tuple[ExecutionRecord, ...]:
         """Return all failed execution records in execution order."""
 
         return tuple(
@@ -159,6 +175,36 @@ class ExecutionHistory:
             for record in self.records
         )
 
+    @property
+    def capabilities_used(self) -> frozenset[str]:
+        """
+        Return the distinct capabilities used by this history.
+
+        Records without a capability, such as ordinary executor or
+        inference steps, are ignored.
+        """
+
+        return frozenset(
+            record.capability
+            for record in self.records
+            if record.capability is not None
+        )
+
+    @property
+    def tool_names_used(self) -> frozenset[str]:
+        """
+        Return the distinct tool names recorded in execution metadata.
+        """
+
+        return frozenset(
+            tool_name
+            for record in self.records
+            if (
+                tool_name := record.metadata.get("tool_name")
+            ) is not None
+            and isinstance(tool_name, str)
+        )
+
     def records_for_step(
         self,
         step_id: UUID,
@@ -174,6 +220,49 @@ class ExecutionHistory:
             if record.step_id == step_id
         )
 
+    def records_for_tool(
+        self,
+        tool_name: str,
+    ) -> tuple[ExecutionRecord, ...]:
+        """
+        Return all records associated with a tool name.
+
+        Tool identity is stored in execution metadata so that
+        ExecutionRecord remains independent of the Tool abstraction.
+        """
+
+        if not isinstance(tool_name, str):
+            raise TypeError("tool_name must be a string")
+
+        if not tool_name.strip():
+            raise ValueError("tool_name must not be empty")
+
+        return tuple(
+            record
+            for record in self.records
+            if record.metadata.get("tool_name") == tool_name
+        )
+
+    def records_for_capability(
+        self,
+        capability: str,
+    ) -> tuple[ExecutionRecord, ...]:
+        """Return all records associated with a capability."""
+
+        if not isinstance(capability, str):
+            raise TypeError("capability must be a string")
+
+        if not capability.strip():
+            raise ValueError(
+                "capability must not be empty"
+            )
+
+        return tuple(
+            record
+            for record in self.records
+            if record.capability == capability
+        )
+
     def add(
         self,
         record: ExecutionRecord,
@@ -181,7 +270,9 @@ class ExecutionHistory:
         """Return a new history with the supplied record appended."""
 
         if not isinstance(record, ExecutionRecord):
-            raise TypeError("record must be an ExecutionRecord")
+            raise TypeError(
+                "record must be an ExecutionRecord"
+            )
 
         return ExecutionHistory(
             task_id=self.task_id,
@@ -199,11 +290,14 @@ class ExecutionHistory:
         started_at: datetime | None = None,
         completed_at: datetime | None = None,
         metadata: Mapping[str, Any] | None = None,
+        capability: str | None = None,
     ) -> ExecutionHistory:
         """Return a new history containing a record for the supplied step."""
 
         if not isinstance(step, ExecutionStep):
-            raise TypeError("step must be an ExecutionStep")
+            raise TypeError(
+                "step must be an ExecutionStep"
+            )
 
         execution_record = ExecutionRecord(
             step_id=step.id,
@@ -213,6 +307,7 @@ class ExecutionHistory:
             error=error,
             decision=decision,
             metadata=metadata or {},
+            capability=capability,
             started_at=(
                 started_at
                 if started_at is not None
@@ -240,11 +335,14 @@ class ExecutionHistory:
         started_at: datetime | None = None,
         completed_at: datetime | None = None,
         metadata: Mapping[str, Any] | None = None,
+        capability: str | None = None,
     ) -> ExecutionHistory:
         """Create a history containing one record for a step."""
 
         if not isinstance(step, ExecutionStep):
-            raise TypeError("step must be an ExecutionStep")
+            raise TypeError(
+                "step must be an ExecutionStep"
+            )
 
         execution_record = ExecutionRecord(
             step_id=step.id,
@@ -254,6 +352,7 @@ class ExecutionHistory:
             error=error,
             decision=decision,
             metadata=metadata or {},
+            capability=capability,
             started_at=(
                 started_at
                 if started_at is not None
