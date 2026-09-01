@@ -1,5 +1,10 @@
 import pytest
 
+from src.agent.decision import (
+    AutonomyAction,
+    AutonomyDecision,
+    AutonomyPolicy,
+)
 from src.agent.control import ControlDecision, ExecutionController
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
@@ -234,6 +239,7 @@ def test_runtime_uses_step_executor_without_inference_provider():
     assert executed == ["Use executor"]
     assert result.output is None
 
+
 from src.tools.base import Tool, ToolResult
 from src.tools.registry import ToolRegistry
 
@@ -434,8 +440,12 @@ def test_runtime_can_execute_tools_and_inference_in_same_plan():
         "Generated: Explain the result"
     )
 
+
 def test_runtime_rejects_invalid_max_steps():
-    with pytest.raises(ValueError, match="max_steps must be greater than zero"):
+    with pytest.raises(
+        ValueError,
+        match="max_steps must be greater than zero",
+    ):
         AgentRuntime(max_steps=0)
 
 
@@ -497,6 +507,7 @@ def test_runtime_allows_execution_within_max_steps():
     assert result.succeeded
     assert result.executed_steps == 2
 
+
 def test_runtime_uses_execution_controller():
     decisions = []
 
@@ -528,6 +539,7 @@ def test_runtime_uses_execution_controller():
     assert result.succeeded
     assert decisions == [ControlDecision.CONTINUE]
 
+
 def test_runtime_stops_when_controller_returns_stop():
     class StopController(ExecutionController):
         def decide(self, outcome):
@@ -558,6 +570,7 @@ def test_runtime_stops_when_controller_returns_stop():
 
     assert result.succeeded
     assert result.executed_steps == 1
+
 
 def test_runtime_records_successful_step_in_history():
     task = Task(description="Run a successful step")
@@ -718,6 +731,7 @@ def test_runtime_history_preserves_execution_order():
         for record in result.history.records
     )
 
+
 def test_runtime_executes_multi_step_plan_from_planner():
     class MultiStepPlanner:
         def plan(self, task):
@@ -755,6 +769,7 @@ def test_runtime_executes_multi_step_plan_from_planner():
         "First step",
         "Second step",
     ]
+
 
 def test_runtime_executes_multi_step_tool_and_inference_plan():
     registry = ToolRegistry()
@@ -804,3 +819,209 @@ def test_runtime_executes_multi_step_tool_and_inference_plan():
     assert result.history.records[1].output == (
         "Generated: Explain the result"
     )
+
+
+def test_runtime_replanner_receives_execution_history():
+    planner_contexts = []
+
+    class ReplanningPlanner:
+        def plan(self, context):
+            planner_contexts.append(context)
+
+            if len(planner_contexts) == 1:
+                return ExecutionPlan(
+                    task_id=context.task.id,
+                    steps=(
+                        ExecutionStep(
+                            description="Initial attempt",
+                            order=1,
+                        ),
+                    ),
+                )
+
+            assert context.history is not None
+            assert context.history.record_count == 1
+
+            failed_record = context.history.last
+
+            assert failed_record is not None
+            assert failed_record.description == "Initial attempt"
+            assert failed_record.success is False
+            assert failed_record.error == "initial execution failed"
+
+            return ExecutionPlan(
+                task_id=context.task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Recovery attempt",
+                        order=1,
+                    ),
+                ),
+            )
+
+    class ReplanningPolicy(AutonomyPolicy):
+        def __init__(self):
+            self.calls = 0
+
+        def decide(self, context):
+            self.calls += 1
+
+            if self.calls == 1:
+                return AutonomyDecision(
+                    action=AutonomyAction.EXECUTE,
+                    reason="execute initial plan",
+                )
+
+            if (
+                context.last_execution is not None
+                and context.last_execution.decision
+                == ControlDecision.FAIL
+            ):
+                return AutonomyDecision(
+                    action=AutonomyAction.REPLAN,
+                    reason="replan after failed execution",
+                )
+
+            return AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="execute recovery plan",
+            )
+
+    attempts = []
+
+    def executor(step):
+        attempts.append(step.description)
+
+        if step.description == "Initial attempt":
+            raise RuntimeError("initial execution failed")
+
+    task = Task(description="Recover from execution failure")
+
+    result = AgentRuntime(
+        planner=ReplanningPlanner(),
+        step_executor=executor,
+        autonomy_policy=ReplanningPolicy(),
+    ).run(task)
+
+    assert result.succeeded
+    assert result.executed_steps == 1
+
+    assert attempts == [
+        "Initial attempt",
+        "Recovery attempt",
+    ]
+
+    assert len(planner_contexts) == 2
+
+
+def test_runtime_replanning_preserves_complete_execution_trace():
+    planner_contexts = []
+
+    class ReplanningPlanner:
+        def plan(self, context):
+            planner_contexts.append(context)
+
+            if len(planner_contexts) == 1:
+                return ExecutionPlan(
+                    task_id=context.task.id,
+                    steps=(
+                        ExecutionStep(
+                            description="Failing step",
+                            order=1,
+                        ),
+                    ),
+                )
+
+            return ExecutionPlan(
+                task_id=context.task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Recovery step one",
+                        order=1,
+                    ),
+                    ExecutionStep(
+                        description="Recovery step two",
+                        order=2,
+                    ),
+                ),
+            )
+
+    class ReplanningPolicy(AutonomyPolicy):
+        def __init__(self):
+            self.calls = 0
+
+        def decide(self, context):
+            self.calls += 1
+
+            if self.calls == 1:
+                return AutonomyDecision(
+                    action=AutonomyAction.EXECUTE,
+                    reason="execute initial plan",
+                )
+
+            if (
+                context.last_execution is not None
+                and context.last_execution.decision
+                == ControlDecision.FAIL
+            ):
+                return AutonomyDecision(
+                    action=AutonomyAction.REPLAN,
+                    reason="replace failed plan",
+                )
+
+            return AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="execute replanned steps",
+            )
+
+    attempts = []
+
+    def executor(step):
+        attempts.append(step.description)
+
+        if step.description == "Failing step":
+            raise RuntimeError("planned failure")
+
+    task = Task(description="Preserve replanning history")
+
+    result = AgentRuntime(
+        planner=ReplanningPlanner(),
+        step_executor=executor,
+        autonomy_policy=ReplanningPolicy(),
+    ).run(task)
+
+    assert result.succeeded
+    assert result.executed_steps == 2
+
+    assert attempts == [
+        "Failing step",
+        "Recovery step one",
+        "Recovery step two",
+    ]
+
+    assert result.history is not None
+    assert result.history.record_count == 3
+
+    assert [
+        record.description
+        for record in result.history.records
+    ] == [
+        "Failing step",
+        "Recovery step one",
+        "Recovery step two",
+    ]
+
+    assert result.history.records[0].success is False
+    assert result.history.records[0].error == "planned failure"
+
+    assert result.history.records[1].success is True
+    assert result.history.records[2].success is True
+
+    assert len(planner_contexts) == 2
+
+    second_context = planner_contexts[1]
+
+    assert second_context.history is not None
+    assert second_context.history.record_count == 1
+    assert second_context.history.last is not None
+    assert second_context.history.last.description == "Failing step"
