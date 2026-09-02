@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -280,6 +279,9 @@ class AgentRuntime:
                     )
                     metadata["autonomy_reason"] = (
                         autonomy_decision.reason
+                    )
+                    metadata["autonomy_evidence"] = (
+                        autonomy_decision.evidence
                     )
 
                 if step.tool_name is not None:
@@ -694,6 +696,7 @@ class AgentRuntime:
             success=result.success,
             output=result.output,
             error=result.error,
+            progress_made=result.progress_made,
         )
 
     def _execute_inference_step(

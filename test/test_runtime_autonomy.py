@@ -268,3 +268,108 @@ def test_runtime_policy_receives_autonomy_decision_context() -> None:
     assert first_context.retry_count == 0
     assert first_context.replan_count == 0
     assert first_context.remaining_step_budget == 100
+def test_runtime_records_autonomy_evidence() -> None:
+    evidence = {
+        "task_id": "test-task",
+        "progress_made": True,
+        "failure_count": 0,
+        "retry_count": 0,
+        "replan_count": 0,
+        "remaining_step_budget": 99,
+        "current_step": "step-1",
+    }
+
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="execute with evidence",
+                evidence=evidence,
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Autonomy evidence"
+    )
+
+    result = AgentRuntime(
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert len(result.history.records) == 1
+
+    record = result.history.records[0]
+
+    assert record.metadata["autonomy_action"] == "execute"
+    assert record.metadata["autonomy_reason"] == (
+        "execute with evidence"
+    )
+    assert record.metadata["autonomy_evidence"] == evidence
+
+
+def test_runtime_preserves_immutable_autonomy_evidence() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="immutable evidence",
+                evidence={
+                    "failure_count": 0,
+                    "retry_count": 0,
+                },
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Immutable autonomy evidence"
+    )
+
+    result = AgentRuntime(
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.history is not None
+
+    record = result.history.records[0]
+    evidence = record.metadata["autonomy_evidence"]
+
+    assert evidence["failure_count"] == 0
+    assert evidence["retry_count"] == 0
+
+    try:
+        evidence["failure_count"] = 1
+    except TypeError:
+        pass
+    else:
+        raise AssertionError(
+            "autonomy evidence must remain immutable"
+        )
+
+
+def test_runtime_records_empty_autonomy_evidence() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="empty evidence",
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Empty autonomy evidence"
+    )
+
+    result = AgentRuntime(
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.history is not None
+
+    record = result.history.records[0]
+
+    assert record.metadata["autonomy_evidence"] == {}

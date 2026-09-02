@@ -124,6 +124,47 @@ def test_autonomy_decision_stores_action_and_reason():
     assert decision.reason == "ready to execute"
 
 
+def test_autonomy_decision_defaults_to_empty_evidence():
+    decision = AutonomyDecision(
+        action=AutonomyAction.EXECUTE,
+        reason="ready to execute",
+    )
+
+    assert decision.evidence == {}
+    assert len(decision.evidence) == 0
+
+
+def test_autonomy_decision_stores_evidence():
+    evidence = {
+        "failure_count": 2,
+        "retry_count": 1,
+        "remaining_step_budget": 7,
+    }
+
+    decision = AutonomyDecision(
+        action=AutonomyAction.REPLAN,
+        reason="repeated failure",
+        evidence=evidence,
+    )
+
+    assert decision.evidence["failure_count"] == 2
+    assert decision.evidence["retry_count"] == 1
+    assert decision.evidence["remaining_step_budget"] == 7
+
+
+def test_autonomy_decision_evidence_is_immutable():
+    decision = AutonomyDecision(
+        action=AutonomyAction.EXECUTE,
+        reason="ready",
+        evidence={
+            "failure_count": 0,
+        },
+    )
+
+    with pytest.raises(TypeError):
+        decision.evidence["failure_count"] = 10
+
+
 def test_autonomy_decision_is_immutable():
     decision = AutonomyDecision(
         action=AutonomyAction.EXECUTE,
@@ -550,6 +591,7 @@ def test_autonomy_context_completes_empty_plan():
     assert decision.should_complete
     assert "no steps" in decision.reason
 
+
 def test_autonomy_context_replans_when_execution_made_no_progress():
     context = make_autonomy_context()
 
@@ -628,3 +670,76 @@ def test_autonomy_context_failure_takes_priority_over_no_progress():
 
     assert decision.action == AutonomyAction.RETRY
     assert decision.should_retry
+
+
+def test_policy_evidence_contains_runtime_counters():
+    context = make_autonomy_context(
+        failure_count=2,
+        retry_count=3,
+        replan_count=4,
+        remaining_step_budget=7,
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["failure_count"] == 2
+    assert decision.evidence["retry_count"] == 3
+    assert decision.evidence["replan_count"] == 4
+    assert decision.evidence["remaining_step_budget"] == 7
+
+
+def test_policy_evidence_contains_task_and_current_step():
+    context = make_autonomy_context()
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["task_id"] == context.task.id
+    assert (
+        decision.evidence["current_step"]
+        == context.current_step.id
+    )
+
+
+def test_policy_evidence_contains_progress():
+    context = make_autonomy_context()
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="completed",
+        executed_steps=1,
+        history=context.execution_history,
+        progress_made=True,
+    )
+
+    context = context.with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["progress_made"] is True
+
+
+def test_policy_evidence_preserves_unknown_progress():
+    context = make_autonomy_context()
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["progress_made"] is None
+
+
+def test_policy_legacy_context_includes_evidence():
+    task = make_task()
+
+    context = AgentContext(
+        task=task,
+        plan=make_plan(task),
+        state="running",
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["task_id"] == task.id
+    assert decision.evidence["failure_count"] == 0
+    assert decision.evidence["retry_count"] == 0
+    assert decision.evidence["replan_count"] == 0
+    assert decision.evidence["remaining_step_budget"] is None
+    assert decision.evidence["current_step"] == context.plan.steps[0].id
