@@ -4,11 +4,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from src.agent.control import ControlDecision
 from src.agent.plan import ExecutionStep
+
+if TYPE_CHECKING:
+    from src.agent.decision_trace import AutonomyDecisionEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,10 +110,45 @@ class ExecutionRecord:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionHistory:
-    """Immutable ordered history of execution records."""
+    """Immutable ordered history of execution records and autonomy events."""
 
     task_id: UUID
     records: tuple[ExecutionRecord, ...] = ()
+    autonomy_events: tuple[AutonomyDecisionEvent, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task_id, UUID):
+            raise TypeError("task_id must be a UUID")
+
+        if not isinstance(self.records, tuple):
+            raise TypeError(
+                "records must be a tuple"
+            )
+
+        if not all(
+            isinstance(record, ExecutionRecord)
+            for record in self.records
+        ):
+            raise TypeError(
+                "records must contain only ExecutionRecord values"
+            )
+
+        if not isinstance(self.autonomy_events, tuple):
+            raise TypeError(
+                "autonomy_events must be a tuple"
+            )
+
+        for event in self.autonomy_events:
+            if not hasattr(event, "sequence"):
+                raise TypeError(
+                    "autonomy_events must contain "
+                    "autonomy decision events"
+                )
+
+            if not isinstance(event.sequence, int):
+                raise TypeError(
+                    "autonomy event sequence must be an integer"
+                )
 
     @property
     def is_empty(self) -> bool:
@@ -205,6 +243,23 @@ class ExecutionHistory:
             and isinstance(tool_name, str)
         )
 
+    @property
+    def autonomy_event_count(self) -> int:
+        """Return the number of recorded autonomy decisions."""
+
+        return len(self.autonomy_events)
+
+    @property
+    def last_autonomy_event(
+        self,
+    ) -> AutonomyDecisionEvent | None:
+        """Return the most recent autonomy decision event."""
+
+        if not self.autonomy_events:
+            return None
+
+        return self.autonomy_events[-1]
+
     def records_for_step(
         self,
         step_id: UUID,
@@ -277,6 +332,29 @@ class ExecutionHistory:
         return ExecutionHistory(
             task_id=self.task_id,
             records=self.records + (record,),
+            autonomy_events=self.autonomy_events,
+        )
+
+    def add_autonomy_event(
+        self,
+        event: AutonomyDecisionEvent,
+    ) -> ExecutionHistory:
+        """Return a new history with an autonomy event appended."""
+
+        if not hasattr(event, "sequence"):
+            raise TypeError(
+                "event must be an AutonomyDecisionEvent"
+            )
+
+        if not isinstance(event.sequence, int):
+            raise TypeError(
+                "event sequence must be an integer"
+            )
+
+        return ExecutionHistory(
+            task_id=self.task_id,
+            records=self.records,
+            autonomy_events=self.autonomy_events + (event,),
         )
 
     def record(

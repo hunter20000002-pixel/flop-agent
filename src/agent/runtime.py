@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -15,6 +16,7 @@ from src.agent.control import (
     ExecutionController,
     StepOutcome,
 )
+from src.agent.decision_trace import AutonomyDecisionEvent
 from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
@@ -122,6 +124,7 @@ class AgentRuntime:
         failure_count = 0
         retry_count = 0
         replan_count = 0
+        decision_sequence = 0
 
         outputs: list[str] = []
 
@@ -179,6 +182,10 @@ class AgentRuntime:
                     pending_autonomy_decision
                 )
 
+                was_pending_decision = (
+                    autonomy_decision is not None
+                )
+
                 pending_autonomy_decision = None
 
                 # --------------------------------------------------
@@ -193,6 +200,19 @@ class AgentRuntime:
                             decision_context
                         )
                     )
+
+                if autonomy_decision is not None:
+                    if not was_pending_decision:
+                        history = self._record_autonomy_decision(
+                            history=history,
+                            decision=autonomy_decision,
+                            sequence=decision_sequence,
+                            step=current_step,
+                            trigger="policy",
+                        )
+
+                        decision_sequence += 1
+                        context = context.with_history(history)
 
                     if autonomy_decision.action == (
                         AutonomyAction.COMPLETE
@@ -369,6 +389,17 @@ class AgentRuntime:
                         )
                     )
 
+                    history = self._record_autonomy_decision(
+                        history=history,
+                        decision=failure_decision,
+                        sequence=decision_sequence,
+                        step=step,
+                        trigger="failure",
+                    )
+
+                    decision_sequence += 1
+                    context = context.with_history(history)
+
                     if failure_decision.action == (
                         AutonomyAction.RETRY
                     ):
@@ -480,6 +511,32 @@ class AgentRuntime:
                 error=str(exc),
                 history=history,
             )
+
+    @staticmethod
+    def _record_autonomy_decision(
+        *,
+        history: ExecutionHistory,
+        decision: AutonomyDecision,
+        sequence: int,
+        step: ExecutionStep | None,
+        trigger: str,
+    ) -> ExecutionHistory:
+        """Record one autonomy decision in the execution trace."""
+
+        event = AutonomyDecisionEvent(
+            sequence=sequence,
+            action=decision.action,
+            reason=decision.reason,
+            evidence=decision.evidence,
+            step_id=(
+                step.id
+                if step is not None
+                else None
+            ),
+            trigger=trigger,
+        )
+
+        return history.add_autonomy_event(event)
 
     def _build_decision_context(
         self,

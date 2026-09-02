@@ -373,3 +373,188 @@ def test_runtime_records_empty_autonomy_evidence() -> None:
     record = result.history.records[0]
 
     assert record.metadata["autonomy_evidence"] == {}
+
+def test_runtime_traces_initial_autonomy_decision() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="initial execution",
+                evidence={
+                    "failure_count": 0,
+                    "retry_count": 0,
+                },
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Trace initial decision"
+    )
+
+    result = AgentRuntime(
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert result.history.autonomy_event_count == 1
+
+    event = result.history.autonomy_events[0]
+
+    assert event.sequence == 0
+    assert event.action == AutonomyAction.EXECUTE
+    assert event.reason == "initial execution"
+    assert event.evidence["failure_count"] == 0
+    assert event.trigger == "policy"
+
+
+def test_runtime_traces_failure_autonomy_decision() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="initial execution",
+            ),
+            AutonomyDecision(
+                action=AutonomyAction.STOP,
+                reason="stop after failure",
+            ),
+        ]
+    )
+
+    def executor(step):
+        raise RuntimeError("forced failure")
+
+    task = Task(
+        description="Trace failure decision"
+    )
+
+    result = AgentRuntime(
+        planner=TwoStepPlanner(),
+        step_executor=executor,
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert result.history.autonomy_event_count == 2
+
+    first, second = result.history.autonomy_events
+
+    assert first.action == AutonomyAction.EXECUTE
+    assert first.trigger == "policy"
+
+    assert second.action == AutonomyAction.STOP
+    assert second.reason == "stop after failure"
+    assert second.trigger == "failure"
+
+
+def test_runtime_traces_retry_decision() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="initial execution",
+            ),
+            AutonomyDecision(
+                action=AutonomyAction.RETRY,
+                reason="retry failed step",
+            ),
+        ]
+    )
+
+    attempts = 0
+
+    def executor(step):
+        nonlocal attempts
+        attempts += 1
+
+        if attempts == 1:
+            raise RuntimeError("temporary failure")
+
+    task = Task(
+        description="Trace retry decision"
+    )
+
+    result = AgentRuntime(
+        planner=TwoStepPlanner(),
+        step_executor=executor,
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert result.history.autonomy_event_count == 3
+
+    first, second, third = result.history.autonomy_events
+
+    assert first.action == AutonomyAction.EXECUTE
+    assert first.trigger == "policy"
+
+    assert second.action == AutonomyAction.RETRY
+    assert second.trigger == "failure"
+
+    assert third.action == AutonomyAction.EXECUTE
+    assert third.trigger == "policy"
+
+
+def test_runtime_traces_complete_decision() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.COMPLETE,
+                reason="task already satisfied",
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Trace complete decision"
+    )
+
+    result = AgentRuntime(
+        planner=TwoStepPlanner(),
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert result.history.autonomy_event_count == 1
+
+    event = result.history.autonomy_events[0]
+
+    assert event.action == AutonomyAction.COMPLETE
+    assert event.reason == "task already satisfied"
+    assert event.trigger == "policy"
+    assert event.step_id is not None
+
+
+def test_runtime_traces_stop_decision() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.STOP,
+                reason="operator policy stop",
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Trace stop decision"
+    )
+
+    result = AgentRuntime(
+        planner=TwoStepPlanner(),
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert result.history is not None
+    assert result.history.autonomy_event_count == 1
+
+    event = result.history.autonomy_events[0]
+
+    assert event.action == AutonomyAction.STOP
+    assert event.reason == "operator policy stop"
+    assert event.trigger == "policy"
