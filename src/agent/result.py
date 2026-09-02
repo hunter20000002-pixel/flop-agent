@@ -18,6 +18,7 @@ class ExecutionResult:
     output: Any = None
     error: str | None = None
     history: ExecutionHistory | None = None
+    progress_made: bool | None = None
 
     @property
     def succeeded(self) -> bool:

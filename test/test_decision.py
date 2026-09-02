@@ -549,3 +549,82 @@ def test_autonomy_context_completes_empty_plan():
     assert decision.action == AutonomyAction.COMPLETE
     assert decision.should_complete
     assert "no steps" in decision.reason
+
+def test_autonomy_context_replans_when_execution_made_no_progress():
+    context = make_autonomy_context()
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="completed",
+        executed_steps=1,
+        history=context.execution_history,
+        progress_made=False,
+    )
+
+    context = context.with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert decision.should_replan
+    assert "no progress" in decision.reason
+
+
+def test_autonomy_context_executes_when_execution_made_progress():
+    context = make_autonomy_context()
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="completed",
+        executed_steps=1,
+        history=context.execution_history,
+        progress_made=True,
+    )
+
+    context = context.with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.EXECUTE
+    assert decision.should_execute
+
+
+def test_autonomy_context_executes_when_progress_is_unknown():
+    context = make_autonomy_context()
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="completed",
+        executed_steps=1,
+        history=context.execution_history,
+    )
+
+    context = context.with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert result.progress_made is None
+    assert decision.action == AutonomyAction.EXECUTE
+    assert decision.should_execute
+
+
+def test_autonomy_context_failure_takes_priority_over_no_progress():
+    context = make_autonomy_context(
+        failure_count=1,
+    )
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="failed",
+        executed_steps=1,
+        history=context.execution_history,
+        error="execution failed",
+        progress_made=False,
+    )
+
+    context = context.with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.RETRY
+    assert decision.should_retry

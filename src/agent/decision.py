@@ -70,8 +70,8 @@ class AutonomyPolicy:
         existing callers.
 
         AutonomyDecisionContext is used by AgentRuntime when runtime-owned
-        execution evidence such as failure, retry, replan, and remaining
-        step-budget counters is available.
+        execution evidence such as failure, retry, replan, progress, and
+        remaining step-budget counters is available.
         """
 
         if isinstance(context, AutonomyDecisionContext):
@@ -122,6 +122,12 @@ class AutonomyPolicy:
                 return AutonomyDecision(
                     action=AutonomyAction.RETRY,
                     reason="most recent execution failed",
+                )
+
+            if context.last_result.progress_made is False:
+                return AutonomyDecision(
+                    action=AutonomyAction.REPLAN,
+                    reason="most recent execution made no progress",
                 )
 
         return AutonomyDecision(
