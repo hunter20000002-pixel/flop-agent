@@ -337,6 +337,7 @@ class AgentRuntime:
                             or "execution step failed"
                         ),
                         history=history,
+                        progress_made=outcome.progress_made,
                     )
 
                     if not self._autonomy_enabled:
@@ -431,6 +432,7 @@ class AgentRuntime:
                         else None
                     ),
                     history=history,
+                    progress_made=outcome.progress_made,
                 )
 
                 if decision == ControlDecision.STOP:
@@ -454,6 +456,11 @@ class AgentRuntime:
                     else None
                 ),
                 history=context.history,
+                progress_made=(
+                    last_result.progress_made
+                    if last_result is not None
+                    else None
+                ),
             )
 
         except Exception as exc:

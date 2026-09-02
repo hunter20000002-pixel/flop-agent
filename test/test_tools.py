@@ -52,6 +52,26 @@ def test_tool_returns_structured_result():
     assert not result.failed
     assert result.output == "hello"
     assert result.error is None
+    assert result.progress_made is None
+
+
+def test_tool_result_progress_defaults_to_unknown():
+    result = ToolResult(
+        success=True,
+        output="hello",
+    )
+
+    assert result.progress_made is None
+
+
+@pytest.mark.parametrize("progress_made", [True, False])
+def test_tool_result_preserves_progress_evidence(progress_made):
+    result = ToolResult(
+        success=True,
+        progress_made=progress_made,
+    )
+
+    assert result.progress_made is progress_made
 
 
 def test_failed_tool_result():
@@ -62,6 +82,7 @@ def test_failed_tool_result():
     assert result.failed
     assert result.output is None
     assert result.error == "Tool execution failed."
+    assert result.progress_made is None
 
 
 def test_tool_requires_implementation():

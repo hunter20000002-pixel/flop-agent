@@ -1,3 +1,4 @@
+
 import pytest
 
 from src.agent.decision import (
@@ -1025,3 +1026,72 @@ def test_runtime_replanning_preserves_complete_execution_trace():
     assert second_context.history.record_count == 1
     assert second_context.history.last is not None
     assert second_context.history.last.description == "Failing step"
+
+
+@pytest.mark.parametrize("progress_made", [True, False, None])
+def test_runtime_propagates_tool_progress_to_execution_result(
+    progress_made,
+):
+    registry = ToolRegistry()
+
+    class ProgressTool(Tool):
+        @property
+        def name(self) -> str:
+            return "calculator"
+
+        @property
+        def description(self) -> str:
+            return "Reports explicit progress evidence."
+
+        def execute(self, **kwargs):
+            return ToolResult(
+                success=True,
+                output="done",
+                progress_made=progress_made,
+            )
+
+    registry.register(ProgressTool())
+
+    class ToolPlanner:
+        def plan(self, task):
+            return ExecutionPlan(
+                task_id=task.id,
+                steps=(
+                    ExecutionStep(
+                        description="Run progress-aware tool",
+                        order=1,
+                        tool_name="calculator",
+                    ),
+                ),
+            )
+
+    task = Task(description="Propagate tool progress")
+
+    result = AgentRuntime(
+        planner=ToolPlanner(),
+        tool_registry=registry,
+    ).run(task)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.succeeded
+    assert result.progress_made is progress_made
+
+
+def test_runtime_executor_progress_remains_unknown():
+    task = Task(description="Executor progress")
+
+    result = AgentRuntime().run(task)
+
+    assert result.succeeded
+    assert result.progress_made is None
+
+
+def test_runtime_inference_progress_remains_unknown():
+    task = Task(description="Inference progress")
+
+    result = AgentRuntime(
+        inference_provider=ExampleInferenceProvider(),
+    ).run(task)
+
+    assert result.succeeded
+    assert result.progress_made is None

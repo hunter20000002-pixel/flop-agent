@@ -34,6 +34,22 @@ def test_step_outcome_failed_property():
     assert StepOutcome(success=False).failed is True
 
 
+def test_step_outcome_progress_defaults_to_unknown():
+    outcome = StepOutcome(success=True)
+
+    assert outcome.progress_made is None
+
+
+@pytest.mark.parametrize("progress_made", [True, False])
+def test_step_outcome_preserves_progress_evidence(progress_made):
+    outcome = StepOutcome(
+        success=True,
+        progress_made=progress_made,
+    )
+
+    assert outcome.progress_made is progress_made
+
+
 def test_controller_rejects_invalid_outcome():
     controller = ExecutionController()
 

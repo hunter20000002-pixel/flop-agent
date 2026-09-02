@@ -12,6 +12,7 @@ class ToolResult:
     success: bool
     output: Any = None
     error: str | None = None
+    progress_made: bool | None = None
 
     @property
     def failed(self) -> bool:
