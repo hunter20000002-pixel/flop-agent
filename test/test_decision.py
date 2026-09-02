@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import pytest
 
+from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.context import AgentContext
 from src.agent.control import ControlDecision
 from src.agent.decision import (
@@ -9,6 +12,7 @@ from src.agent.decision import (
 )
 from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
+from src.agent.result import ExecutionResult
 from src.agent.task import Task
 
 
@@ -58,6 +62,47 @@ def make_history_with_decision(
             else "execution failed"
         ),
         decision=decision,
+    )
+
+
+def make_autonomy_context(
+    *,
+    failure_count: int = 0,
+    retry_count: int = 0,
+    replan_count: int = 0,
+    remaining_step_budget: int | None = None,
+    last_result: ExecutionResult | None = None,
+    plan: ExecutionPlan | None = None,
+) -> AutonomyDecisionContext:
+    task = make_task()
+
+    history = ExecutionHistory(task_id=task.id)
+
+    if plan is None:
+        plan = make_plan(task)
+
+    return AutonomyDecisionContext(
+        task=task,
+        current_plan=plan,
+        current_step=plan.steps[0] if plan.steps else None,
+        execution_history=history,
+        last_result=last_result,
+        failure_count=failure_count,
+        retry_count=retry_count,
+        replan_count=replan_count,
+        remaining_step_budget=remaining_step_budget,
+    )
+
+
+def make_failed_result(
+    context: AutonomyDecisionContext,
+) -> ExecutionResult:
+    return ExecutionResult(
+        task_id=context.task.id,
+        status="failed",
+        executed_steps=1,
+        history=context.execution_history,
+        error="execution failed",
     )
 
 
@@ -157,7 +202,10 @@ def test_complete_decision_should_complete():
 def test_policy_rejects_invalid_context():
     policy = AutonomyPolicy()
 
-    with pytest.raises(TypeError, match="context must be an AgentContext"):
+    with pytest.raises(
+        TypeError,
+        match="context must be an AgentContext",
+    ):
         policy.decide("not a context")
 
 
@@ -407,3 +455,97 @@ def test_policy_does_not_mutate_context():
     assert context.plan is original_plan
     assert context.history is original_history
     assert context.state == original_state
+
+
+def test_autonomy_context_retries_first_failure():
+    context = make_autonomy_context(
+        failure_count=1,
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.RETRY
+    assert decision.should_retry
+    assert "most recent execution failed" in decision.reason
+
+
+def test_autonomy_context_replans_after_repeated_failures():
+    context = make_autonomy_context(
+        failure_count=2,
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert decision.should_replan
+    assert "repeated execution failures" in decision.reason
+
+
+def test_autonomy_context_replans_when_failure_count_exceeds_two():
+    context = make_autonomy_context(
+        failure_count=5,
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert decision.should_replan
+
+
+def test_autonomy_context_stops_when_budget_is_exhausted():
+    context = make_autonomy_context(
+        failure_count=1,
+        remaining_step_budget=0,
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.STOP
+    assert decision.should_stop
+    assert "budget" in decision.reason
+
+
+def test_autonomy_context_replans_before_executing_without_a_plan():
+    context = make_autonomy_context(
+        plan=None,
+    )
+
+    decision = AutonomyPolicy().decide(
+        context.with_plan(None)
+    )
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert decision.should_replan
+    assert "no execution plan" in decision.reason
+
+
+def test_autonomy_context_completes_empty_plan():
+    task = make_task()
+
+    empty_plan = make_empty_plan(task)
+
+    context = make_autonomy_context(
+        plan=empty_plan,
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.COMPLETE
+    assert decision.should_complete
+    assert "no steps" in decision.reason

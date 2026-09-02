@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -91,13 +90,6 @@ class AutonomyPolicy:
     ) -> AutonomyDecision:
         """Apply autonomy policy using runtime-owned decision evidence."""
 
-        if context.last_result is not None:
-            if context.last_result.failed:
-                return AutonomyDecision(
-                    action=AutonomyAction.RETRY,
-                    reason="most recent execution failed",
-                )
-
         if context.budget_exhausted:
             return AutonomyDecision(
                 action=AutonomyAction.STOP,
@@ -115,6 +107,22 @@ class AutonomyPolicy:
                 action=AutonomyAction.COMPLETE,
                 reason="execution plan contains no steps",
             )
+
+        if context.last_result is not None:
+            if context.last_result.failed:
+                if context.failure_count >= 2:
+                    return AutonomyDecision(
+                        action=AutonomyAction.REPLAN,
+                        reason=(
+                            "repeated execution failures require "
+                            "a new plan"
+                        ),
+                    )
+
+                return AutonomyDecision(
+                    action=AutonomyAction.RETRY,
+                    reason="most recent execution failed",
+                )
 
         return AutonomyDecision(
             action=AutonomyAction.EXECUTE,
