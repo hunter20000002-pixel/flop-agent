@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task
 
+
 @dataclass(frozen=True, slots=True)
 class AutonomyDecisionContext:
     """
@@ -14,8 +16,13 @@ class AutonomyDecisionContext:
 
     AgentContext represents the agent's current execution state.
 
-    AutonomyDecisionContext represents the evidence the autonomy layer
-    can use when deciding what should happen next.
+    AutonomyDecisionContext represents the richer runtime evidence
+    available to the autonomy layer when deciding what should happen
+    next.
+
+    Compatibility properties expose the commonly used AgentContext
+    attributes so existing autonomy policies can continue to operate
+    against the new decision context.
     """
 
     task: Task
@@ -124,6 +131,10 @@ class AutonomyDecisionContext:
                 f"{name} must be a non-negative integer"
             )
 
+    # --------------------------------------------------------------
+    # Canonical autonomy-context properties
+    # --------------------------------------------------------------
+
     @property
     def task_id(self) -> str:
         """Return the identifier of the associated task."""
@@ -132,7 +143,7 @@ class AutonomyDecisionContext:
 
     @property
     def plan_steps(self) -> tuple[ExecutionStep, ...]:
-        """Return the current plan's steps, or an empty tuple."""
+        """Return the steps in the current execution plan."""
 
         if self.current_plan is None:
             return ()
@@ -141,31 +152,31 @@ class AutonomyDecisionContext:
 
     @property
     def capabilities(self) -> frozenset[str] | None:
-        """Return the authorized capabilities."""
+        """Return the capabilities authorized for this execution."""
 
         return self.allowed_capabilities
 
     @property
     def has_plan(self) -> bool:
-        """Return True when a current execution plan exists."""
+        """Return True when an execution plan is available."""
 
         return self.current_plan is not None
 
     @property
     def has_current_step(self) -> bool:
-        """Return True when a current execution step exists."""
+        """Return True when a current execution step is available."""
 
         return self.current_step is not None
 
     @property
     def has_last_result(self) -> bool:
-        """Return True when a previous execution result exists."""
+        """Return True when an execution result is available."""
 
         return self.last_result is not None
 
     @property
     def has_failures(self) -> bool:
-        """Return True when at least one failure has been observed."""
+        """Return True when at least one failure has occurred."""
 
         return self.failure_count > 0
 
@@ -183,11 +194,66 @@ class AutonomyDecisionContext:
 
     @property
     def budget_exhausted(self) -> bool:
-        """
-        Return True when a remaining step budget exists and is zero.
-        """
+        """Return True when no execution attempts remain."""
 
         return self.remaining_step_budget == 0
+
+    # --------------------------------------------------------------
+    # AgentContext compatibility properties
+    # --------------------------------------------------------------
+
+    @property
+    def plan(self) -> ExecutionPlan | None:
+        """Compatibility alias for AgentContext.plan."""
+
+        return self.current_plan
+
+    @property
+    def history(self) -> ExecutionHistory:
+        """Compatibility alias for AgentContext.history."""
+
+        return self.execution_history
+
+    @property
+    def last_execution(self):
+        """
+        Compatibility view of the most recent execution record.
+
+        Older autonomy policies used AgentContext.last_execution.
+        The runtime decision context now derives that value directly
+        from the immutable execution history.
+        """
+
+        return self.execution_history.last
+
+    @property
+    def state(self) -> str:
+        """
+        Compatibility state representation.
+
+        Runtime autonomy decisions operate primarily on explicit
+        evidence fields rather than AgentContext state. Returning
+        'running' preserves the behavior expected by legacy policies
+        while a task is being evaluated by the runtime.
+        """
+
+        return "running"
+
+    @property
+    def memories(self):
+        """
+        Compatibility placeholder for AgentContext.memories.
+
+        AutonomyDecisionContext currently does not own memory state.
+        """
+
+        return ()
+
+    @property
+    def agent_id(self):
+        """Compatibility placeholder for AgentContext.agent_id."""
+
+        return None
 
     def with_counters(
         self,
@@ -196,9 +262,7 @@ class AutonomyDecisionContext:
         retry_count: int | None = None,
         replan_count: int | None = None,
     ) -> AutonomyDecisionContext:
-        """
-        Return a new context with updated decision counters.
-        """
+        """Return a copy with updated autonomy counters."""
 
         return AutonomyDecisionContext(
             task=self.task,
@@ -229,7 +293,7 @@ class AutonomyDecisionContext:
         self,
         plan: ExecutionPlan | None,
     ) -> AutonomyDecisionContext:
-        """Return a new context with a different current plan."""
+        """Return a copy with a replacement execution plan."""
 
         return AutonomyDecisionContext(
             task=self.task,
@@ -248,7 +312,7 @@ class AutonomyDecisionContext:
         self,
         step: ExecutionStep | None,
     ) -> AutonomyDecisionContext:
-        """Return a new context with a different current step."""
+        """Return a copy with a replacement current step."""
 
         return AutonomyDecisionContext(
             task=self.task,
@@ -267,7 +331,7 @@ class AutonomyDecisionContext:
         self,
         result: ExecutionResult | None,
     ) -> AutonomyDecisionContext:
-        """Return a new context with a different last result."""
+        """Return a copy with a replacement execution result."""
 
         return AutonomyDecisionContext(
             task=self.task,
@@ -286,9 +350,7 @@ class AutonomyDecisionContext:
         self,
         remaining_step_budget: int | None,
     ) -> AutonomyDecisionContext:
-        """
-        Return a new context with an updated remaining step budget.
-        """
+        """Return a copy with an updated remaining step budget."""
 
         return AutonomyDecisionContext(
             task=self.task,

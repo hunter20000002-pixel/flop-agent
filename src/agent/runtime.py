@@ -9,6 +9,7 @@ from src.agent.autonomy import (
     AutonomyDecision,
     AutonomyPolicy,
 )
+from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.context import AgentContext
 from src.agent.control import (
     ControlDecision,
@@ -19,7 +20,7 @@ from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
-from src.agent.task import Task
+from src.agent.task import Task, TaskStatus
 from src.inference.base import InferenceProvider, InferenceRequest
 from src.tools.registry import ToolRegistry
 
@@ -63,10 +64,6 @@ class AgentRuntime:
         self.max_steps = max_steps
         self.controller = controller or ExecutionController()
 
-        # Autonomy is opt-in.
-        #
-        # Existing AgentRuntime behavior remains unchanged when
-        # no autonomy policy is supplied.
         self.autonomy_policy = autonomy_policy
         self._autonomy_enabled = autonomy_policy is not None
 
@@ -121,7 +118,15 @@ class AgentRuntime:
         history = ExecutionHistory(task_id=task.id)
 
         executed_steps = 0
+        execution_attempts = 0
+
+        failure_count = 0
+        retry_count = 0
+        replan_count = 0
+
         outputs: list[str] = []
+
+        last_result: ExecutionResult | None = None
 
         try:
             context = AgentContext(
@@ -150,20 +155,26 @@ class AgentRuntime:
 
             step_index = 0
 
-            # A pending autonomy decision is used when the runtime has
-            # already consulted the policy for the next action.
-            #
-            # This is important for RETRY and REPLAN:
-            # - RETRY must execute the failed step again without asking
-            #   the policy to reconsider the same failure.
-            # - REPLAN must execute the newly generated plan without
-            #   asking the policy to reconsider the failure that caused
-            #   the replan.
             pending_autonomy_decision: (
                 AutonomyDecision | None
             ) = None
 
             while step_index < len(context.plan_steps):
+
+                current_step = context.plan_steps[step_index]
+
+                decision_context = self._build_decision_context(
+                    task=task,
+                    context=context,
+                    current_step=current_step,
+                    history=history,
+                    last_result=last_result,
+                    failure_count=failure_count,
+                    retry_count=retry_count,
+                    replan_count=replan_count,
+                    capabilities=capabilities,
+                    execution_attempts=execution_attempts,
+                )
 
                 autonomy_decision: AutonomyDecision | None = (
                     pending_autonomy_decision
@@ -179,7 +190,9 @@ class AgentRuntime:
                     and autonomy_decision is None
                 ):
                     autonomy_decision = (
-                        self.autonomy_policy.decide(context)
+                        self.autonomy_policy.decide(
+                            decision_context
+                        )
                     )
 
                     if autonomy_decision.action == (
@@ -195,28 +208,24 @@ class AgentRuntime:
                     if autonomy_decision.action == (
                         AutonomyAction.REPLAN
                     ):
-                        plan = self._create_plan(
+                        replan_count += 1
+
+                        context = self._replan(
                             context=context,
                             task=task,
                         )
 
-                        if not isinstance(plan, ExecutionPlan):
-                            raise TypeError(
-                                "planner must return an ExecutionPlan"
-                            )
+                        history = context.history
 
-                        context = context.with_plan(plan)
                         step_index = 0
 
-                        # The policy has already decided that the
-                        # current plan should be replaced. The newly
-                        # generated plan must now be executed before
-                        # asking the policy to reconsider the same
-                        # previous execution failure.
                         pending_autonomy_decision = (
                             AutonomyDecision(
                                 action=AutonomyAction.EXECUTE,
-                                reason="execute replanned execution plan",
+                                reason=(
+                                    "execute replanned "
+                                    "execution plan"
+                                ),
                             )
                         )
                         continue
@@ -233,7 +242,7 @@ class AgentRuntime:
                 # --------------------------------------------------
                 # STEP LIMIT
                 # --------------------------------------------------
-                if executed_steps >= self.max_steps:
+                if execution_attempts >= self.max_steps:
                     raise RuntimeError(
                         f"execution step limit exceeded: "
                         f"{self.max_steps}"
@@ -242,6 +251,8 @@ class AgentRuntime:
                 step = context.plan_steps[step_index]
 
                 started_at = datetime.now(timezone.utc)
+
+                execution_attempts += 1
 
                 outcome = self._execute_step(
                     step,
@@ -289,9 +300,6 @@ class AgentRuntime:
 
                 capability = self._capability_for_step(step)
 
-                # --------------------------------------------------
-                # RECORD EXECUTION
-                # --------------------------------------------------
                 history = history.record(
                     step,
                     success=outcome.success,
@@ -313,31 +321,56 @@ class AgentRuntime:
                 # FAILURE
                 # --------------------------------------------------
                 if decision == ControlDecision.FAIL:
+                    failure_count += 1
 
-                    # Without an explicitly configured autonomy
-                    # policy, preserve the original behavior:
-                    # failure immediately fails the task.
+                    last_result = ExecutionResult(
+                        task_id=task.id,
+                        status=TaskStatus.FAILED,
+                        executed_steps=executed_steps,
+                        output=(
+                            "\n".join(outputs)
+                            if outputs
+                            else None
+                        ),
+                        error=(
+                            outcome.error
+                            or "execution step failed"
+                        ),
+                        history=history,
+                    )
+
                     if not self._autonomy_enabled:
                         raise RuntimeError(
                             outcome.error
                             or "execution step failed"
                         )
 
-                    # Autonomy is enabled. Ask the policy what to do
-                    # with this failed execution.
+                    failure_context = (
+                        self._build_decision_context(
+                            task=task,
+                            context=context,
+                            current_step=step,
+                            history=history,
+                            last_result=last_result,
+                            failure_count=failure_count,
+                            retry_count=retry_count,
+                            replan_count=replan_count,
+                            capabilities=capabilities,
+                            execution_attempts=execution_attempts,
+                        )
+                    )
+
                     failure_decision = (
-                        self.autonomy_policy.decide(context)
+                        self.autonomy_policy.decide(
+                            failure_context
+                        )
                     )
 
                     if failure_decision.action == (
                         AutonomyAction.RETRY
                     ):
-                        # Keep the same step index and carry the
-                        # retry decision into the next iteration.
-                        #
-                        # The policy has already made the decision,
-                        # so it must NOT be asked again before the
-                        # retry executes.
+                        retry_count += 1
+
                         pending_autonomy_decision = (
                             failure_decision
                         )
@@ -346,26 +379,24 @@ class AgentRuntime:
                     if failure_decision.action == (
                         AutonomyAction.REPLAN
                     ):
-                        plan = self._create_plan(
+                        replan_count += 1
+
+                        context = self._replan(
                             context=context,
                             task=task,
                         )
 
-                        if not isinstance(plan, ExecutionPlan):
-                            raise TypeError(
-                                "planner must return an ExecutionPlan"
-                            )
+                        history = context.history
 
-                        context = context.with_plan(plan)
                         step_index = 0
 
-                        # The policy has already made the replan
-                        # decision. Execute the replacement plan
-                        # before consulting the policy again.
                         pending_autonomy_decision = (
                             AutonomyDecision(
                                 action=AutonomyAction.EXECUTE,
-                                reason="execute replanned execution plan",
+                                reason=(
+                                    "execute replanned "
+                                    "execution plan"
+                                ),
                             )
                         )
                         continue
@@ -390,14 +421,28 @@ class AgentRuntime:
                 # --------------------------------------------------
                 executed_steps += 1
 
+                last_result = ExecutionResult(
+                    task_id=task.id,
+                    status=task.status,
+                    executed_steps=executed_steps,
+                    output=(
+                        "\n".join(outputs)
+                        if outputs
+                        else None
+                    ),
+                    history=history,
+                )
+
                 if decision == ControlDecision.STOP:
                     break
 
-                # Move to the next plan step.
                 step_index += 1
 
+                # Retry count represents the current retry chain.
+                # A successful execution terminates that chain.
+                retry_count = 0
+
             task.mark_completed()
-            context = context.with_state("completed")
 
             return ExecutionResult(
                 task_id=task.id,
@@ -427,6 +472,65 @@ class AgentRuntime:
                 history=history,
             )
 
+    def _build_decision_context(
+        self,
+        *,
+        task: Task,
+        context: AgentContext,
+        current_step: ExecutionStep | None,
+        history: ExecutionHistory,
+        last_result: ExecutionResult | None,
+        failure_count: int,
+        retry_count: int,
+        replan_count: int,
+        capabilities: frozenset[str] | None,
+        execution_attempts: int,
+    ) -> AutonomyDecisionContext:
+        """Build runtime-owned autonomy evidence."""
+
+        return AutonomyDecisionContext(
+            task=task,
+            current_plan=context.plan,
+            current_step=current_step,
+            execution_history=history,
+            last_result=last_result,
+            failure_count=failure_count,
+            retry_count=retry_count,
+            replan_count=replan_count,
+            allowed_capabilities=capabilities,
+            remaining_step_budget=max(
+                self.max_steps - execution_attempts,
+                0,
+            ),
+        )
+
+    def _replan(
+        self,
+        *,
+        context: AgentContext,
+        task: Task,
+    ) -> AgentContext:
+        """Create and install a replacement execution plan."""
+
+        task.mark_planning()
+
+        replanned = self._create_plan(
+            context=context,
+            task=task,
+        )
+
+        if not isinstance(replanned, ExecutionPlan):
+            raise TypeError(
+                "planner must return an ExecutionPlan"
+            )
+
+        task.mark_ready()
+        task.mark_running()
+
+        return context.with_plan(replanned).with_state(
+            "running"
+        )
+
     def _create_plan(
         self,
         context: AgentContext,
@@ -435,21 +539,6 @@ class AgentRuntime:
         """
         Create a plan while supporting both context-aware and legacy
         custom planners.
-
-        The built-in Planner is context-aware.
-
-        Custom planners use one of two explicit conventions:
-
-            plan(context) -> ExecutionPlan
-
-        for context-aware planning, or:
-
-            plan(task) -> ExecutionPlan
-
-        for the legacy task-only contract.
-
-        The parameter name is used as the explicit contract boundary.
-        No exception-based fallback or runtime introspection is used.
         """
 
         if isinstance(self.planner, Planner):
@@ -464,15 +553,12 @@ class AgentRuntime:
                 : code.co_argcount
             ]
 
-            # Bound instance methods contain "self" first.
-            # The actual planner argument is therefore position 1.
             if (
                 len(positional_names) >= 2
                 and positional_names[1] == "context"
             ):
                 return plan_method(context)
 
-            # Also support callable functions without "self".
             if (
                 len(positional_names) >= 1
                 and positional_names[0] == "context"
@@ -554,10 +640,6 @@ class AgentRuntime:
     ) -> None:
         """
         Enforce the capability boundary for tool-backed execution.
-
-        ``None`` means unrestricted direct runtime execution.
-        A supplied capability set means every requested tool must map
-        to an explicitly authorized capability.
         """
 
         if allowed_capabilities is None:

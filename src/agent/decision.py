@@ -1,8 +1,10 @@
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 
+from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.context import AgentContext
 from src.agent.control import ControlDecision
 
@@ -56,13 +58,74 @@ class AutonomyDecision:
 
 
 class AutonomyPolicy:
-    """Determines the next action from the current agent context."""
+    """Policy responsible for deciding the agent's next action."""
 
-    def decide(self, context: AgentContext) -> AutonomyDecision:
-        """Return the next autonomy action for the given context."""
+    def decide(
+        self,
+        context: AgentContext | AutonomyDecisionContext,
+    ) -> AutonomyDecision:
+        """
+        Decide what the agent should do next.
 
-        if not isinstance(context, AgentContext):
-            raise TypeError("context must be an AgentContext")
+        AgentContext remains supported for backward compatibility with
+        existing callers.
+
+        AutonomyDecisionContext is used by AgentRuntime when runtime-owned
+        execution evidence such as failure, retry, replan, and remaining
+        step-budget counters is available.
+        """
+
+        if isinstance(context, AutonomyDecisionContext):
+            return self._decide_from_autonomy_context(context)
+
+        if isinstance(context, AgentContext):
+            return self._decide_from_agent_context(context)
+
+        raise TypeError(
+            "context must be an AgentContext"
+        )
+
+    def _decide_from_autonomy_context(
+        self,
+        context: AutonomyDecisionContext,
+    ) -> AutonomyDecision:
+        """Apply autonomy policy using runtime-owned decision evidence."""
+
+        if context.last_result is not None:
+            if context.last_result.failed:
+                return AutonomyDecision(
+                    action=AutonomyAction.RETRY,
+                    reason="most recent execution failed",
+                )
+
+        if context.budget_exhausted:
+            return AutonomyDecision(
+                action=AutonomyAction.STOP,
+                reason="execution step budget is exhausted",
+            )
+
+        if context.current_plan is None:
+            return AutonomyDecision(
+                action=AutonomyAction.REPLAN,
+                reason="no execution plan is available",
+            )
+
+        if not context.plan_steps:
+            return AutonomyDecision(
+                action=AutonomyAction.COMPLETE,
+                reason="execution plan contains no steps",
+            )
+
+        return AutonomyDecision(
+            action=AutonomyAction.EXECUTE,
+            reason="executable plan is available",
+        )
+
+    def _decide_from_agent_context(
+        self,
+        context: AgentContext,
+    ) -> AutonomyDecision:
+        """Apply the legacy AgentContext-based autonomy policy."""
 
         state = context.state.strip().lower()
 

@@ -5,6 +5,7 @@ from src.agent.autonomy import (
     AutonomyDecision,
     AutonomyPolicy,
 )
+from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.control import (
     ControlDecision,
     ExecutionController,
@@ -22,9 +23,11 @@ class RecordingAutonomyPolicy(AutonomyPolicy):
     ) -> None:
         self.decisions = list(decisions)
         self.calls = 0
+        self.contexts: list[object] = []
 
     def decide(self, context):
         self.calls += 1
+        self.contexts.append(context)
 
         if self.decisions:
             return self.decisions.pop(0)
@@ -232,3 +235,36 @@ def test_runtime_uses_retry_decision_after_failure() -> None:
     assert result.status.value == "completed"
     assert attempts == 3
     assert result.executed_steps == 2
+
+
+def test_runtime_policy_receives_autonomy_decision_context() -> None:
+    policy = RecordingAutonomyPolicy(
+        [
+            AutonomyDecision(
+                action=AutonomyAction.EXECUTE,
+                reason="execute",
+            ),
+        ]
+    )
+
+    task = Task(
+        description="Decision context"
+    )
+
+    result = AgentRuntime(
+        autonomy_policy=policy,
+    ).run(task)
+
+    assert result.status.value == "completed"
+    assert policy.contexts
+
+    first_context = policy.contexts[0]
+
+    assert isinstance(
+        first_context,
+        AutonomyDecisionContext,
+    )
+    assert first_context.failure_count == 0
+    assert first_context.retry_count == 0
+    assert first_context.replan_count == 0
+    assert first_context.remaining_step_budget == 100
