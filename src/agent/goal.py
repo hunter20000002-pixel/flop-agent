@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from src.agent.result import ExecutionResult
 from src.agent.task import Task
+
+if TYPE_CHECKING:
+    from src.agent.result import ExecutionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,8 @@ class GoalVerifier:
         result: ExecutionResult,
     ) -> GoalVerificationResult:
         """Verify whether an execution result satisfied the task goal."""
+
+        from src.agent.result import ExecutionResult
 
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")

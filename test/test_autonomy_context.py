@@ -6,8 +6,7 @@ from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
-from src.agent.task import Task
-
+from src.agent.task import Task, TaskStatus
 
 def make_context(
     *,
@@ -402,3 +401,62 @@ def test_positive_step_budget_is_not_exhausted() -> None:
     )
 
     assert not context.budget_exhausted
+
+def test_goal_verification_failed_property() -> None:
+    from src.agent.goal import GoalVerificationResult
+
+    task = Task(
+        description="goal verification context",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        goal_verification=GoalVerificationResult(
+            satisfied=False,
+            reason="goal not satisfied",
+        ),
+    )
+
+    context = AutonomyDecisionContext(
+        task=task,
+        current_plan=None,
+        current_step=None,
+        execution_history=ExecutionHistory(
+            task_id=task.id,
+        ),
+        last_result=result,
+    )
+
+    assert context.goal_verification_failed is True
+    assert context.goal_verification_succeeded is False
+
+
+def test_goal_verification_succeeded_property() -> None:
+    from src.agent.goal import GoalVerificationResult
+
+    task = Task(
+        description="successful goal verification context",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        goal_verification=GoalVerificationResult(
+            satisfied=True,
+            reason="goal satisfied",
+        ),
+    )
+
+    context = AutonomyDecisionContext(
+        task=task,
+        current_plan=None,
+        current_step=None,
+        execution_history=ExecutionHistory(
+            task_id=task.id,
+        ),
+        last_result=result,
+    )
+
+    assert context.goal_verification_failed is False
+    assert context.goal_verification_succeeded is True

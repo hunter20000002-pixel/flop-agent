@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -176,7 +175,7 @@ class AutonomyDecisionContext:
 
     @property
     def has_failures(self) -> bool:
-        """Return True when at least one failure has occurred."""
+        """Return True when at least one execution failure has occurred."""
 
         return self.failure_count > 0
 
@@ -191,6 +190,32 @@ class AutonomyDecisionContext:
         """Return True when at least one replan has occurred."""
 
         return self.replan_count > 0
+
+    @property
+    def goal_verification_failed(self) -> bool:
+        """
+        Return True when execution completed but semantic goal
+        verification failed.
+        """
+
+        return (
+            self.last_result is not None
+            and self.last_result.goal_verification is not None
+            and not self.last_result.goal_verification.satisfied
+        )
+
+    @property
+    def goal_verification_succeeded(self) -> bool:
+        """
+        Return True when a configured goal verifier confirmed
+        the task goal.
+        """
+
+        return (
+            self.last_result is not None
+            and self.last_result.goal_verification is not None
+            and self.last_result.goal_verification.satisfied
+        )
 
     @property
     def budget_exhausted(self) -> bool:

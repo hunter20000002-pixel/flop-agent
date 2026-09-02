@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -17,6 +16,7 @@ from src.agent.control import (
     StepOutcome,
 )
 from src.agent.decision_trace import AutonomyDecisionEvent
+from src.agent.goal import GoalVerifier
 from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
@@ -46,6 +46,7 @@ class AgentRuntime:
         tool_registry: ToolRegistry | None = None,
         controller: ExecutionController | None = None,
         autonomy_policy: AutonomyPolicy | None = None,
+        goal_verifier: GoalVerifier | None = None,
         max_steps: int = 100,
     ) -> None:
         self.planner = planner or Planner()
@@ -67,6 +68,16 @@ class AgentRuntime:
 
         self.autonomy_policy = autonomy_policy
         self._autonomy_enabled = autonomy_policy is not None
+
+        if goal_verifier is not None and not isinstance(
+            goal_verifier,
+            GoalVerifier,
+        ):
+            raise TypeError(
+                "goal_verifier must be a GoalVerifier or None"
+            )
+
+        self.goal_verifier = goal_verifier
 
     def run(
         self,
@@ -92,6 +103,9 @@ class AgentRuntime:
 
         Without an explicit autonomy policy, runtime preserves the
         original deterministic execution behavior.
+
+        When a goal verifier is configured, the final execution result
+        is passed through that verifier before being returned.
         """
 
         if not isinstance(task, Task):
@@ -479,7 +493,7 @@ class AgentRuntime:
 
             task.mark_completed()
 
-            return ExecutionResult(
+            result = ExecutionResult(
                 task_id=task.id,
                 status=task.status,
                 executed_steps=executed_steps,
@@ -494,6 +508,11 @@ class AgentRuntime:
                     if last_result is not None
                     else None
                 ),
+            )
+
+            return self._verify_goal(
+                task=task,
+                result=result,
             )
 
         except Exception as exc:
@@ -511,6 +530,33 @@ class AgentRuntime:
                 error=str(exc),
                 history=history,
             )
+
+    def _verify_goal(
+        self,
+        *,
+        task: Task,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Verify the final execution result when a verifier is configured."""
+
+        if self.goal_verifier is None:
+            return result
+
+        verification = self.goal_verifier.verify(
+            task,
+            result,
+        )
+
+        return ExecutionResult(
+            task_id=result.task_id,
+            status=result.status,
+            executed_steps=result.executed_steps,
+            output=result.output,
+            error=result.error,
+            history=result.history,
+            progress_made=result.progress_made,
+            goal_verification=verification,
+        )
 
     @staticmethod
     def _record_autonomy_decision(

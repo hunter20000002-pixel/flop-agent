@@ -1,8 +1,7 @@
 from uuid import uuid4
 from src.agent.history import ExecutionHistory, ExecutionRecord
 from src.agent.result import ExecutionResult
-from src.agent.task import TaskStatus
-
+from src.agent.task import Task, TaskStatus
 
 def test_successful_execution_result():
     task_id = uuid4()
@@ -88,3 +87,36 @@ def test_execution_result_history_defaults_to_none():
     )
 
     assert result.history is None
+
+def test_execution_result_supports_goal_verification() -> None:
+    from src.agent.goal import GoalVerificationResult
+
+    task = Task(
+        description="goal verification result",
+    )
+
+    verification = GoalVerificationResult(
+        satisfied=True,
+        reason="goal satisfied",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        goal_verification=verification,
+    )
+
+    assert result.goal_verification is verification
+
+
+def test_execution_result_goal_verification_defaults_to_none() -> None:
+    task = Task(
+        description="result without verification",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+    )
+
+    assert result.goal_verification is None

@@ -11,7 +11,15 @@ from src.agent.loop import AgentLoop
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task, TaskStatus
+from src.agent.runtime import AgentRuntime
 
+from src.agent.decision import AutonomyAction
+from src.agent.goal import GoalVerificationResult, GoalVerifier
+from src.agent.planner import Planner
+from src.agent.result import ExecutionResult
+from src.agent.runtime import AgentRuntime
+from src.agent.task import Task
+from src.tools.builtin import create_builtin_registry
 
 class RecordingPlanner:
     def __init__(self) -> None:
@@ -324,3 +332,117 @@ def test_agent_loop_executes_filesystem_tool():
 
     assert result.result.succeeded
     assert result.result.output is not None
+
+def test_loop_does_not_complete_when_goal_verification_fails() -> None:
+    from src.agent.goal import GoalVerificationResult, GoalVerifier
+
+    class UnsatisfiedVerifier(GoalVerifier):
+        def _verify(self, task, result):
+            return GoalVerificationResult(
+                satisfied=False,
+                reason="goal was not achieved",
+            )
+
+    runtime = AgentRuntime(
+        goal_verifier=UnsatisfiedVerifier(),
+    )
+
+    loop = AgentLoop(
+        runtime=runtime,
+        max_iterations=1,
+    )
+
+    task = Task(
+        description="goal must not be treated as complete",
+    )
+
+    result = loop.run(task)
+
+    assert result.completed is False
+    assert result.result.goal_verification is not None
+    assert result.result.goal_verification.satisfied is False
+    assert task.status == TaskStatus.FAILED
+
+
+def test_loop_reacts_to_goal_verification_failure_with_replan() -> None:
+    from src.agent.goal import GoalVerificationResult, GoalVerifier
+
+    class UnsatisfiedVerifier(GoalVerifier):
+        def __init__(self):
+            self.calls = 0
+
+        def _verify(self, task, result):
+            self.calls += 1
+
+            return GoalVerificationResult(
+                satisfied=False,
+                reason="goal requires another attempt",
+            )
+
+    verifier = UnsatisfiedVerifier()
+
+    loop = AgentLoop(
+        runtime=AgentRuntime(
+            goal_verifier=verifier,
+        ),
+        max_iterations=3,
+    )
+
+    task = Task(
+        description="retry through replanning",
+    )
+
+    result = loop.run(task)
+
+    assert verifier.calls >= 1
+    assert result.action == AutonomyAction.STOP
+    assert result.completed is False
+    assert result.result.goal_verification is not None
+    assert result.result.goal_verification.satisfied is False
+
+
+def test_loop_executes_replanned_plan_after_goal_verification_failure() -> None:
+    class EventuallySatisfiedVerifier(GoalVerifier):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _verify(
+            self,
+            task: Task,
+            result: ExecutionResult,
+        ) -> GoalVerificationResult:
+            self.calls += 1
+
+            return GoalVerificationResult(
+                satisfied=self.calls >= 2,
+                reason=(
+                    "goal satisfied after replanning"
+                    if self.calls >= 2
+                    else "goal not satisfied yet"
+                ),
+            )
+
+    verifier = EventuallySatisfiedVerifier()
+    runtime = AgentRuntime(
+        planner=Planner(),
+        tool_registry=create_builtin_registry(),
+        goal_verifier=verifier,
+    )
+
+    loop = AgentLoop(
+        runtime=runtime,
+        max_iterations=10,
+    )
+
+    task = Task(
+        description="replan after semantic goal failure",
+    )
+
+    result = loop.run(task)
+
+    assert result.completed
+    assert result.action == AutonomyAction.COMPLETE
+    assert result.iterations >= 3
+    assert verifier.calls == 2
+    assert result.result.goal_verification is not None
+    assert result.result.goal_verification.satisfied

@@ -1095,3 +1095,96 @@ def test_runtime_inference_progress_remains_unknown():
 
     assert result.succeeded
     assert result.progress_made is None
+def test_runtime_invokes_goal_verifier_for_final_result() -> None:
+    from src.agent.goal import (
+        GoalVerificationResult,
+        GoalVerifier,
+    )
+
+    class RecordingGoalVerifier(GoalVerifier):
+        def __init__(self) -> None:
+            self.calls = []
+
+        def _verify(self, task, result):
+            self.calls.append((task.id, result.task_id))
+
+            return GoalVerificationResult(
+                satisfied=True,
+                reason="goal verified by test verifier",
+                evidence={"verified": True},
+            )
+
+    verifier = RecordingGoalVerifier()
+    runtime = AgentRuntime(
+        goal_verifier=verifier,
+    )
+
+    task = Task(
+        description="verify runtime goal verification",
+    )
+
+    result = runtime.run(task)
+
+    assert len(verifier.calls) == 1
+    assert verifier.calls[0] == (task.id, task.id)
+
+    assert result.goal_verification is not None
+    assert result.goal_verification.satisfied is True
+    assert result.goal_verification.reason == (
+        "goal verified by test verifier"
+    )
+
+
+def test_runtime_preserves_execution_result_without_goal_verifier() -> None:
+    runtime = AgentRuntime()
+
+    task = Task(
+        description="run without goal verifier",
+    )
+
+    result = runtime.run(task)
+
+    assert result.goal_verification is None
+    assert result.succeeded is True
+
+
+def test_runtime_preserves_unsatisfied_goal_verification() -> None:
+    from src.agent.goal import (
+        GoalVerificationResult,
+        GoalVerifier,
+    )
+
+    class UnsatisfiedGoalVerifier(GoalVerifier):
+        def _verify(self, task, result):
+            return GoalVerificationResult(
+                satisfied=False,
+                reason="execution succeeded but goal was not satisfied",
+                evidence={"verified": False},
+            )
+
+    runtime = AgentRuntime(
+        goal_verifier=UnsatisfiedGoalVerifier(),
+    )
+
+    task = Task(
+        description="test unsatisfied goal",
+    )
+
+    result = runtime.run(task)
+
+    assert result.succeeded is True
+    assert result.goal_verification is not None
+    assert result.goal_verification.satisfied is False
+    assert result.goal_verification.reason == (
+        "execution succeeded but goal was not satisfied"
+    )
+
+
+def test_runtime_rejects_invalid_goal_verifier() -> None:
+    with pytest.raises(
+        TypeError,
+        match="goal_verifier must be a GoalVerifier or None",
+    ):
+        AgentRuntime(
+            goal_verifier="invalid",  # type: ignore[arg-type]
+        )

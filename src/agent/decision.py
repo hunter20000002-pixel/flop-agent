@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -123,6 +124,12 @@ class AutonomyPolicy:
     ) -> dict[str, Any]:
         """Build structured evidence from runtime decision context."""
 
+        verification = (
+            context.last_result.goal_verification
+            if context.last_result is not None
+            else None
+        )
+
         return {
             "task_id": context.task.id,
             "progress_made": (
@@ -137,6 +144,16 @@ class AutonomyPolicy:
             "current_step": (
                 context.current_step.id
                 if context.current_step is not None
+                else None
+            ),
+            "goal_verified": (
+                verification.satisfied
+                if verification is not None
+                else None
+            ),
+            "goal_verification_reason": (
+                verification.reason
+                if verification is not None
                 else None
             ),
         }
@@ -199,6 +216,26 @@ class AutonomyPolicy:
             )
 
         if context.last_result is not None:
+            if context.goal_verification_failed:
+                if context.replan_count >= 1:
+                    return AutonomyDecision(
+                        action=AutonomyAction.STOP,
+                        reason=(
+                            "goal verification remains unsatisfied "
+                            "after replanning"
+                        ),
+                        evidence=evidence,
+                    )
+
+                return AutonomyDecision(
+                    action=AutonomyAction.REPLAN,
+                    reason=(
+                        "execution succeeded but goal verification "
+                        "was not satisfied"
+                    ),
+                    evidence=evidence,
+                )
+
             if context.last_result.failed:
                 if context.failure_count >= 2:
                     return AutonomyDecision(

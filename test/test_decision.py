@@ -13,8 +13,7 @@ from src.agent.decision import (
 from src.agent.history import ExecutionHistory
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
-from src.agent.task import Task
-
+from src.agent.task import Task, TaskStatus
 
 def make_task() -> Task:
     return Task(description="Test autonomous decision making")
@@ -743,3 +742,98 @@ def test_policy_legacy_context_includes_evidence():
     assert decision.evidence["replan_count"] == 0
     assert decision.evidence["remaining_step_budget"] is None
     assert decision.evidence["current_step"] == context.plan.steps[0].id
+
+def test_autonomy_policy_replans_when_goal_verification_fails() -> None:
+    from src.agent.goal import GoalVerificationResult
+
+    task = Task(
+        description="goal verification failure",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        goal_verification=GoalVerificationResult(
+            satisfied=False,
+            reason="required outcome was not achieved",
+        ),
+    )
+
+    context = AutonomyDecisionContext(
+        task=task,
+        current_plan=ExecutionPlan(
+            task_id=task.id,
+            steps=(),
+        ),
+        current_step=None,
+        execution_history=ExecutionHistory(
+            task_id=task.id,
+        ),
+        last_result=result,
+    )
+
+    # A plan with zero steps is normally an immediate COMPLETE case,
+    # so construct a context with a real step.
+    step = ExecutionStep(
+        order=1,
+        description="attempt goal",
+    )
+
+    context = AutonomyDecisionContext(
+        task=task,
+        current_plan=ExecutionPlan(
+            task_id=task.id,
+            steps=(step,),
+        ),
+        current_step=step,
+        execution_history=ExecutionHistory(
+            task_id=task.id,
+        ),
+        last_result=result,
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert "goal verification" in decision.reason
+
+
+def test_autonomy_policy_stops_after_goal_verification_failure_and_replan() -> None:
+    from src.agent.goal import GoalVerificationResult
+
+    task = Task(
+        description="repeated goal verification failure",
+    )
+
+    step = ExecutionStep(
+        order=1,
+        description="attempt goal",
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        goal_verification=GoalVerificationResult(
+            satisfied=False,
+            reason="goal still not achieved",
+        ),
+    )
+
+    context = AutonomyDecisionContext(
+        task=task,
+        current_plan=ExecutionPlan(
+            task_id=task.id,
+            steps=(step,),
+        ),
+        current_step=step,
+        execution_history=ExecutionHistory(
+            task_id=task.id,
+        ),
+        last_result=result,
+        replan_count=1,
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.STOP
+    assert "replanning" in decision.reason
