@@ -13,8 +13,9 @@ from src.client import Message
 def make_context(
     *,
     agent_id: str | None = None,
+    description: str = "Memory integration test",
 ) -> AgentContext:
-    task = Task(description="Memory integration test")
+    task = Task(description=description)
 
     return AgentContext(
         task=task,
@@ -457,4 +458,108 @@ def test_memory_integration_does_not_mutate_context():
     enriched = integration.enrich_context(context)
 
     assert context.memories == ()
+    assert enriched.memories == (entry,)
+
+
+def test_memory_integration_retrieves_successful_recovery_for_future_task():
+    store = InMemoryMemoryStore()
+    integration = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    recovery_context = make_context(
+        agent_id="test-agent",
+        description="Recover from repeated execution failure",
+    )
+
+    recovery_output = (
+        "Recovered execution after repeated failure "
+        "by using a memory-informed replanning strategy."
+    )
+
+    entry = integration.store_execution_output(
+        recovery_context,
+        recovery_output,
+    )
+
+    future_task = Task(
+        description=(
+            "Recover from repeated execution failure "
+            "using a memory-informed replanning strategy"
+        ),
+    )
+
+    relevant = integration.retrieve_relevant(
+        future_task,
+        agent_id="test-agent",
+    )
+
+    assert relevant == (entry,)
+    assert relevant[0].content == recovery_output
+    assert relevant[0].task_id == recovery_context.task.id
+    assert relevant[0].agent_id == "test-agent"
+    assert relevant[0].metadata == {
+        "source": "runtime",
+    }
+
+
+def test_memory_integration_recovery_memory_is_excluded_from_own_historical_search():
+    store = InMemoryMemoryStore()
+    integration = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    context = make_context(
+        agent_id="test-agent",
+        description="Repeated failure recovery",
+    )
+
+    entry = integration.store_execution_output(
+        context,
+        "Repeated failure recovery succeeded.",
+    )
+
+    relevant = integration.retrieve_relevant(
+        context.task,
+        agent_id="test-agent",
+    )
+
+    assert entry not in relevant
+    assert relevant == ()
+
+
+def test_memory_integration_enriches_future_context_with_recovery_memory():
+    store = InMemoryMemoryStore()
+    integration = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    recovery_context = make_context(
+        agent_id="test-agent",
+        description="Recover execution after repeated failure",
+    )
+
+    entry = integration.store_execution_output(
+        recovery_context,
+        "Successful recovery using memory-informed replanning.",
+    )
+
+    future_context = make_context(
+        agent_id="test-agent",
+        description=(
+            "Recover execution after repeated failure "
+            "using memory-informed replanning"
+        ),
+    )
+
+    enriched = integration.enrich_context(
+        future_context,
+    )
+
+    assert enriched is not future_context
+    assert enriched.task.id == future_context.task.id
+    assert enriched.agent_id == "test-agent"
     assert enriched.memories == (entry,)
