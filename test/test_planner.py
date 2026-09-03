@@ -183,8 +183,8 @@ def test_planner_recognizes_technocore_observation_verbs(
 
 def test_planner_uses_highest_priority_memory() -> None:
     """
-    Planner should consume the highest-priority memory rather than the
-    lowest-priority memory.
+    Planner should preserve memory priority order when injecting
+    multiple memories into a planning step.
     """
 
     context = make_context(
@@ -202,7 +202,7 @@ def test_planner_uses_highest_priority_memory() -> None:
     lower_priority = MemoryEntry(
         content=(
             "This memory is less relevant and should not be selected "
-            "when a higher-priority memory is available."
+            "before a higher-priority memory."
         ),
         task_id=uuid4(),
     )
@@ -227,5 +227,304 @@ def test_planner_uses_highest_priority_memory() -> None:
 
     assert (
         "This memory is less relevant"
-        not in step.description
+        in step.description
     )
+
+    assert step.description.index(
+        "The planner should use the most relevant historical memory"
+    ) < step.description.index(
+        "This memory is less relevant"
+    )
+
+
+def test_planner_includes_multiple_prioritized_memories() -> None:
+    """Planner should include multiple memories in priority order."""
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    first = MemoryEntry(
+        content="First high-priority planning memory.",
+        task_id=uuid4(),
+    )
+
+    second = MemoryEntry(
+        content="Second high-priority planning memory.",
+        task_id=uuid4(),
+    )
+
+    third = MemoryEntry(
+        content="Third high-priority planning memory.",
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (
+            first,
+            second,
+            third,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    description = plan.steps[0].description
+
+    assert "First high-priority planning memory." in description
+    assert "Second high-priority planning memory." in description
+    assert "Third high-priority planning memory." in description
+
+    assert description.index(
+        "First high-priority planning memory."
+    ) < description.index(
+        "Second high-priority planning memory."
+    )
+
+    assert description.index(
+        "Second high-priority planning memory."
+    ) < description.index(
+        "Third high-priority planning memory."
+    )
+
+
+def test_planner_limits_planning_memories_to_three() -> None:
+    """Planner should bound memory injected into a planning step."""
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    memories = tuple(
+        MemoryEntry(
+            content=f"Planning memory {index}.",
+            task_id=uuid4(),
+        )
+        for index in range(1, 6)
+    )
+
+    context = context.with_memories(memories)
+
+    plan = Planner().plan(context)
+
+    description = plan.steps[0].description
+
+    assert "Planning memory 1." in description
+    assert "Planning memory 2." in description
+    assert "Planning memory 3." in description
+
+    assert "Planning memory 4." not in description
+    assert "Planning memory 5." not in description
+
+
+def test_planner_deduplicates_memory_content() -> None:
+    """Duplicate memory content should only be injected once."""
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    duplicate_one = MemoryEntry(
+        content="The same planning fact.",
+        task_id=uuid4(),
+    )
+
+    duplicate_two = MemoryEntry(
+        content="The same planning fact.",
+        task_id=uuid4(),
+    )
+
+    distinct = MemoryEntry(
+        content="A different planning fact.",
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (
+            duplicate_one,
+            duplicate_two,
+            distinct,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    description = plan.steps[0].description
+
+    assert description.count(
+        "The same planning fact."
+    ) == 1
+
+    assert "A different planning fact." in description
+
+
+def test_planner_deduplication_preserves_priority_order() -> None:
+    """
+    Deduplication should preserve the first occurrence of each memory
+    and therefore preserve retrieval priority.
+    """
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    first = MemoryEntry(
+        content="Priority A.",
+        task_id=uuid4(),
+    )
+
+    duplicate = MemoryEntry(
+        content="Priority A.",
+        task_id=uuid4(),
+    )
+
+    second = MemoryEntry(
+        content="Priority B.",
+        task_id=uuid4(),
+    )
+
+    third = MemoryEntry(
+        content="Priority C.",
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (
+            first,
+            duplicate,
+            second,
+            third,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    description = plan.steps[0].description
+
+    assert description.count("Priority A.") == 1
+
+    assert description.index(
+        "Priority A."
+    ) < description.index(
+        "Priority B."
+    )
+
+    assert description.index(
+        "Priority B."
+    ) < description.index(
+        "Priority C."
+    )
+
+
+def test_planner_memory_budget_counts_unique_non_empty_memories() -> None:
+    """
+    Duplicate memories should not consume the three-memory planning
+    budget.
+    """
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    memories = (
+        MemoryEntry(
+            content="Memory A.",
+            task_id=uuid4(),
+        ),
+        MemoryEntry(
+            content="Memory A.",
+            task_id=uuid4(),
+        ),
+        MemoryEntry(
+            content="Memory B.",
+            task_id=uuid4(),
+        ),
+        MemoryEntry(
+            content="Memory C.",
+            task_id=uuid4(),
+        ),
+        MemoryEntry(
+            content="Memory D.",
+            task_id=uuid4(),
+        ),
+    )
+
+    context = context.with_memories(memories)
+
+    plan = Planner().plan(context)
+
+    description = plan.steps[0].description
+
+    assert "Memory A." in description
+    assert "Memory B." in description
+    assert "Memory C." in description
+    assert "Memory D." not in description
+
+
+def test_planner_memory_enrichment_does_not_change_tool_selection() -> None:
+    """Memory text must not affect conservative tool selection."""
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content=(
+            "This memory mentions filesystem, directory, file, "
+            "read, list, and folder."
+        ),
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+    assert plan.steps[0].tool_name == "calculator"
+    assert plan.steps[0].tool_args == {
+        "expression": "10 + 5",
+    }
+
+
+def test_planner_memory_enrichment_applies_to_each_step() -> None:
+    """Each execution step should receive the same prioritized memory set."""
+
+    context = make_context(
+        "Observe recent Technocore activity and then "
+        "calculate 10 + 5"
+    )
+
+    first = MemoryEntry(
+        content="The agent should preserve observation context.",
+        task_id=uuid4(),
+    )
+
+    second = MemoryEntry(
+        content="The agent should preserve calculation context.",
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (
+            first,
+            second,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 2
+
+    for step in plan.steps:
+        assert (
+            "The agent should preserve observation context."
+            in step.description
+        )
+
+        assert (
+            "The agent should preserve calculation context."
+            in step.description
+        )
