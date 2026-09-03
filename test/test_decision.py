@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from datetime import datetime, timezone
 import pytest
 
 from src.agent.autonomy_context import AutonomyDecisionContext
@@ -930,3 +930,142 @@ def test_legacy_policy_evidence_contains_memory_count() -> None:
     decision = AutonomyPolicy().decide(context)
 
     assert decision.evidence["memory_count"] == 1
+
+def test_autonomy_context_exposes_latest_technocore_observation() -> None:
+    from src.agent.observation import TechnocoreObservation
+
+    task = make_task()
+
+    observation = TechnocoreObservation(
+        room="lobby",
+        since=100,
+        messages=(),
+        observed_at=datetime.now(timezone.utc),
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status="completed",
+        data=observation,
+    )
+
+    context = make_autonomy_context().with_result(result)
+
+    assert context.last_observation is observation
+    assert context.has_observation
+    assert context.observation_room == "lobby"
+    assert context.observation_message_count == 0
+    assert context.observation_first_sequence is None
+    assert context.observation_last_sequence is None
+
+
+def test_autonomy_context_exposes_observation_sequences() -> None:
+    from src.agent.observation import TechnocoreObservation
+    from src.client import Message
+
+    task = make_task()
+
+    observation = TechnocoreObservation(
+        room="lobby",
+        since=100,
+        messages=(
+            Message(
+                seq=101,
+                timestamp="2026-09-03T10:00:00Z",
+                short_did="z6Mk...test1",
+                text="First",
+                raw_line=(
+                    "[101] 2026-09-03T10:00:00Z "
+                    "<z6Mk...test1> First"
+                ),
+            ),
+            Message(
+                seq=102,
+                timestamp="2026-09-03T10:01:00Z",
+                short_did="z6Mk...test2",
+                text="Second",
+                raw_line=(
+                    "[102] 2026-09-03T10:01:00Z "
+                    "<z6Mk...test2> Second"
+                ),
+            ),
+        ),
+        observed_at=datetime.now(timezone.utc),
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status="completed",
+        data=observation,
+    )
+
+    context = make_autonomy_context().with_result(result)
+
+    assert context.has_observation
+    assert context.observation_room == "lobby"
+    assert context.observation_message_count == 2
+    assert context.observation_first_sequence == 101
+    assert context.observation_last_sequence == 102
+
+
+def test_autonomy_context_ignores_non_observation_result_data() -> None:
+    context = make_autonomy_context()
+
+    result = ExecutionResult(
+        task_id=context.task.id,
+        status="completed",
+        data={
+            "kind": "unrelated",
+            "value": 42,
+        },
+    )
+
+    context = context.with_result(result)
+
+    assert context.last_observation is None
+    assert not context.has_observation
+    assert context.observation_room is None
+    assert context.observation_message_count == 0
+    assert context.observation_first_sequence is None
+    assert context.observation_last_sequence is None
+
+
+def test_policy_evidence_contains_observation_metadata() -> None:
+    from src.agent.observation import TechnocoreObservation
+    from src.client import Message
+
+    task = make_task()
+
+    observation = TechnocoreObservation(
+        room="lobby",
+        since=100,
+        messages=(
+            Message(
+                seq=101,
+                timestamp="2026-09-03T10:00:00Z",
+                short_did="z6Mk...test1",
+                text="Observed activity.",
+                raw_line=(
+                    "[101] 2026-09-03T10:00:00Z "
+                    "<z6Mk...test1> Observed activity."
+                ),
+            ),
+        ),
+        observed_at=datetime.now(timezone.utc),
+    )
+
+    result = ExecutionResult(
+        task_id=task.id,
+        status="completed",
+        data=observation,
+    )
+
+    context = make_autonomy_context().with_result(result)
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["has_observation"] is True
+    assert decision.evidence["observation_room"] == "lobby"
+    assert decision.evidence["observation_message_count"] == 1
+    assert decision.evidence["observation_first_sequence"] == 101
+    assert decision.evidence["observation_last_sequence"] == 101

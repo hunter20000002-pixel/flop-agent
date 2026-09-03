@@ -1,14 +1,13 @@
 """Technocore response parsing."""
-
 import re
 
 from .client import Message
 
 
 MESSAGE_RE = re.compile(
-    r"^\[(\d+)\]\s+"
+    r"^\[?(\d+)\]?\s+"
     r"(\S+)\s+"
-    r"<([^>]+)>\s+"
+    r"<?([^>\s]+)>?\s+"
     r"(.*)$"
 )
 
@@ -21,7 +20,6 @@ def parse_messages(
     messages = []
 
     for line in body.splitlines():
-
         match = MESSAGE_RE.match(line)
 
         if not match:
@@ -55,7 +53,6 @@ def find_matching_message(
     """
 
     for message in parse_messages(body):
-
         if (
             message.seq == message_id
             and message.text == text

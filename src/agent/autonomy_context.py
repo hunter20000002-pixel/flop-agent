@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from src.agent.history import ExecutionHistory
 from src.agent.memory import MemoryEntry
+from src.agent.observation import TechnocoreObservation
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task
@@ -175,6 +176,76 @@ class AutonomyDecisionContext:
         """Return True when autonomy has memory evidence available."""
 
         return bool(self.memories)
+
+    @property
+    def last_observation(self) -> TechnocoreObservation | None:
+        """
+        Return the most recent structured Technocore observation.
+
+        Observation data is carried through ExecutionResult.data.
+        Only a validated TechnocoreObservation is exposed here.
+        """
+
+        if self.last_result is None:
+            return None
+
+        if isinstance(
+            self.last_result.data,
+            TechnocoreObservation,
+        ):
+            return self.last_result.data
+
+        return None
+
+    @property
+    def has_observation(self) -> bool:
+        """Return True when the latest execution produced an observation."""
+
+        return self.last_observation is not None
+
+    @property
+    def observation_message_count(self) -> int:
+        """Return the number of messages in the latest observation."""
+
+        observation = self.last_observation
+
+        if observation is None:
+            return 0
+
+        return observation.message_count
+
+    @property
+    def observation_room(self) -> str | None:
+        """Return the room associated with the latest observation."""
+
+        observation = self.last_observation
+
+        if observation is None:
+            return None
+
+        return observation.room
+
+    @property
+    def observation_first_sequence(self) -> int | None:
+        """Return the first observed message sequence, when available."""
+
+        observation = self.last_observation
+
+        if observation is None:
+            return None
+
+        return observation.first_sequence
+
+    @property
+    def observation_last_sequence(self) -> int | None:
+        """Return the last observed message sequence, when available."""
+
+        observation = self.last_observation
+
+        if observation is None:
+            return None
+
+        return observation.last_sequence
 
     @property
     def has_plan(self) -> bool:

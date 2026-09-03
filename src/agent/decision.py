@@ -103,8 +103,9 @@ class AutonomyPolicy:
         existing callers.
 
         AutonomyDecisionContext is used by AgentRuntime when runtime-owned
-        execution evidence such as failure, retry, replan, progress, and
-        remaining step-budget counters is available.
+        execution evidence such as failure, retry, replan, progress,
+        remaining step-budget counters, and environmental observations
+        is available.
         """
 
         if isinstance(context, AutonomyDecisionContext):
@@ -156,6 +157,17 @@ class AutonomyPolicy:
                 if verification is not None
                 else None
             ),
+            "has_observation": context.has_observation,
+            "observation_room": context.observation_room,
+            "observation_message_count": (
+                context.observation_message_count
+            ),
+            "observation_first_sequence": (
+                context.observation_first_sequence
+            ),
+            "observation_last_sequence": (
+                context.observation_last_sequence
+            ),
         }
 
     @staticmethod
@@ -185,6 +197,11 @@ class AutonomyPolicy:
                 and context.plan.steps
                 else None
             ),
+            "has_observation": False,
+            "observation_room": None,
+            "observation_message_count": 0,
+            "observation_first_sequence": None,
+            "observation_last_sequence": None,
         }
 
     def _decide_from_autonomy_context(
