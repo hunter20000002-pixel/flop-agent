@@ -13,7 +13,10 @@ from src.agent.decision import (
 )
 from src.agent.goal import GoalVerificationResult, GoalVerifier
 from src.agent.loop import AgentLoop
-from src.agent.memory import MemoryEntry
+from src.agent.memory import (
+    InMemoryMemoryStore,
+    MemoryEntry,
+)
 from src.agent.memory_integration import MemoryIntegration
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
@@ -610,3 +613,131 @@ def test_loop_replan_passes_memory_to_planner() -> None:
 
     plan = result.result
     assert plan.succeeded
+
+
+def test_loop_completes_recovery_and_persists_memory_for_future_task() -> None:
+    """
+    Verify the complete V0.7.2 recovery pipeline:
+
+    failure -> retry -> repeated failure -> memory-aware replan
+    -> successful execution -> persisted recovery memory
+    -> retrieval for a future related task -> enriched context.
+    """
+
+    store = InMemoryMemoryStore()
+    memory = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    planner = ContextRecordingPlanner()
+
+    recovery_task = Task(
+        description=(
+            "Recover execution after repeated failure "
+            "using memory-informed replanning"
+        ),
+    )
+
+    first_failure = ExecutionResult(
+        task_id=recovery_task.id,
+        status=TaskStatus.FAILED,
+        executed_steps=1,
+        error="first execution failure",
+    )
+
+    second_failure = ExecutionResult(
+        task_id=recovery_task.id,
+        status=TaskStatus.FAILED,
+        executed_steps=1,
+        error="second execution failure",
+    )
+
+    recovery_output = (
+        "Recovered execution after repeated failure "
+        "by using a memory-informed replanning strategy."
+    )
+
+    successful_recovery = ExecutionResult(
+        task_id=recovery_task.id,
+        status=TaskStatus.COMPLETED,
+        executed_steps=1,
+        output=recovery_output,
+    )
+
+    runtime = RecordingRuntime(
+        results=[
+            first_failure,
+            second_failure,
+            successful_recovery,
+        ]
+    )
+
+    loop = AgentLoop(
+        planner=planner,
+        runtime=runtime,
+        memory=memory,
+        max_iterations=10,
+        max_retries=3,
+    )
+
+    result = loop.run(recovery_task)
+
+    assert result.completed
+    assert result.action == AutonomyAction.COMPLETE
+    assert result.result is successful_recovery
+    assert runtime.calls == 3
+
+    assert len(planner.received_contexts) >= 2
+
+    replan_context = planner.received_contexts[1]
+
+    assert replan_context.task.id == recovery_task.id
+    assert replan_context.memories == ()
+
+    stored_memories = store.query(
+        task_id=recovery_task.id,
+        agent_id="test-agent",
+    )
+
+    assert len(stored_memories) == 1
+
+    recovery_memory = stored_memories[0]
+
+    assert recovery_memory.content == recovery_output
+    assert recovery_memory.task_id == recovery_task.id
+    assert recovery_memory.agent_id == "test-agent"
+    assert recovery_memory.metadata == {
+        "source": "runtime",
+    }
+
+    future_task = Task(
+        description=(
+            "Recover execution after repeated failure "
+            "with a memory-informed replanning strategy"
+        ),
+    )
+
+    relevant = memory.retrieve_relevant(
+        future_task,
+        agent_id="test-agent",
+    )
+
+    assert relevant == (recovery_memory,)
+
+    future_context = AgentContext(
+        task=future_task,
+        agent_id="test-agent",
+        state="idle",
+    )
+
+    enriched = memory.enrich_context(
+        future_context,
+    )
+
+    assert enriched is not future_context
+    assert enriched.task.id == future_task.id
+    assert enriched.agent_id == "test-agent"
+    assert enriched.memories == (
+        recovery_memory,
+    )
