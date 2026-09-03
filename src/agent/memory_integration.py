@@ -4,10 +4,10 @@ import re
 from typing import Any
 from uuid import UUID
 
-from src.agent.result import ExecutionResult
-
 from src.agent.context import AgentContext
 from src.agent.memory import InMemoryStore, MemoryEntry, MemoryStore
+from src.agent.observation import TechnocoreObservation
+from src.agent.result import ExecutionResult
 from src.agent.task import Task
 
 
@@ -256,6 +256,45 @@ class MemoryIntegration:
         return self.store_for_task(
             context.task.id,
             output,
+            metadata=combined_metadata,
+        )
+
+    def store_observation(
+        self,
+        context: AgentContext,
+        observation: TechnocoreObservation,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryEntry:
+        """Persist a Technocore observation as task memory."""
+
+        if not isinstance(context, AgentContext):
+            raise TypeError("context must be an AgentContext")
+
+        if not isinstance(
+            observation,
+            TechnocoreObservation,
+        ):
+            raise TypeError(
+                "observation must be a TechnocoreObservation"
+            )
+
+        combined_metadata = {
+            "source": "observation",
+            "room": observation.room,
+            "since": observation.since,
+            "message_count": observation.message_count,
+            "first_sequence": observation.first_sequence,
+            "last_sequence": observation.last_sequence,
+            "observed_at": observation.observed_at.isoformat(),
+        }
+
+        if metadata is not None:
+            combined_metadata.update(metadata)
+
+        return self.store_for_task(
+            context.task.id,
+            observation.to_untrusted_text(),
             metadata=combined_metadata,
         )
 

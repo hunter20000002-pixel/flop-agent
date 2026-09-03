@@ -1,9 +1,13 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from src.agent.context import AgentContext
 from src.agent.memory import InMemoryMemoryStore, MemoryEntry
 from src.agent.memory_integration import MemoryIntegration
+from src.agent.observation import TechnocoreObservation
 from src.agent.task import Task
+from src.client import Message
 
 
 def make_context(
@@ -16,6 +20,45 @@ def make_context(
         task=task,
         agent_id=agent_id,
         state="running",
+    )
+
+
+def make_observation(
+    *,
+    room: str = "lobby",
+    since: int = 100,
+    messages: tuple[Message, ...] | None = None,
+) -> TechnocoreObservation:
+    if messages is None:
+        messages = (
+            Message(
+                seq=101,
+                timestamp="2026-09-03T10:00:00Z",
+                short_did="did:key:test1",
+                text="FLOP Agent observation test.",
+                raw_line="101 | test | FLOP Agent observation test.",
+            ),
+            Message(
+                seq=102,
+                timestamp="2026-09-03T10:01:00Z",
+                short_did="did:key:test2",
+                text="Technocore environment changed.",
+                raw_line="102 | test | Technocore environment changed.",
+            ),
+        )
+
+    return TechnocoreObservation(
+        room=room,
+        since=since,
+        messages=messages,
+        observed_at=datetime(
+            2026,
+            9,
+            3,
+            10,
+            2,
+            tzinfo=timezone.utc,
+        ),
     )
 
 
@@ -225,6 +268,117 @@ def test_memory_integration_runtime_output_preserves_explicit_source():
         "source": "observation",
         "step_order": 1,
     }
+
+
+def test_memory_integration_stores_technocore_observation():
+    context = make_context()
+    store = InMemoryMemoryStore()
+
+    integration = MemoryIntegration(store)
+    observation = make_observation()
+
+    entry = integration.store_observation(
+        context,
+        observation,
+    )
+
+    assert entry.task_id == context.task.id
+    assert entry.agent_id is None
+    assert entry.content == observation.to_untrusted_text()
+    assert entry.metadata == {
+        "source": "observation",
+        "room": "lobby",
+        "since": 100,
+        "message_count": 2,
+        "first_sequence": 101,
+        "last_sequence": 102,
+        "observed_at": "2026-09-03T10:02:00+00:00",
+    }
+
+
+def test_memory_integration_stores_empty_technocore_observation():
+    context = make_context()
+    store = InMemoryMemoryStore()
+
+    integration = MemoryIntegration(store)
+    observation = make_observation(
+        messages=(),
+    )
+
+    entry = integration.store_observation(
+        context,
+        observation,
+    )
+
+    assert entry.content == observation.to_untrusted_text()
+    assert entry.metadata == {
+        "source": "observation",
+        "room": "lobby",
+        "since": 100,
+        "message_count": 0,
+        "first_sequence": None,
+        "last_sequence": None,
+        "observed_at": "2026-09-03T10:02:00+00:00",
+    }
+
+
+def test_memory_integration_observation_preserves_additional_metadata():
+    context = make_context()
+    store = InMemoryMemoryStore()
+
+    integration = MemoryIntegration(store)
+    observation = make_observation()
+
+    entry = integration.store_observation(
+        context,
+        observation,
+        metadata={
+            "importance": 10,
+            "source": "custom-observation",
+        },
+    )
+
+    assert entry.metadata == {
+        "source": "custom-observation",
+        "room": "lobby",
+        "since": 100,
+        "message_count": 2,
+        "first_sequence": 101,
+        "last_sequence": 102,
+        "observed_at": "2026-09-03T10:02:00+00:00",
+        "importance": 10,
+    }
+
+
+def test_memory_integration_rejects_invalid_observation():
+    context = make_context()
+    store = InMemoryMemoryStore()
+
+    integration = MemoryIntegration(store)
+
+    with pytest.raises(
+        TypeError,
+        match="observation must be a TechnocoreObservation",
+    ):
+        integration.store_observation(
+            context,
+            "not an observation",
+        )
+
+
+def test_memory_integration_observation_does_not_mutate_context():
+    context = make_context()
+    store = InMemoryMemoryStore()
+
+    integration = MemoryIntegration(store)
+    observation = make_observation()
+
+    integration.store_observation(
+        context,
+        observation,
+    )
+
+    assert context.memories == ()
 
 
 def test_memory_integration_rejects_non_string_source():
