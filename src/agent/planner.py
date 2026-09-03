@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any
 
 from src.agent.context import AgentContext
 from src.agent.plan import ExecutionPlan, ExecutionStep
@@ -64,6 +66,13 @@ class Planner:
             tool_name, tool_args = self._select_tool(
                 step_description
             )
+
+            strategy = self._select_memory_strategy(
+                context,
+            )
+
+            if strategy is not None:
+                tool_name, tool_args = strategy
 
             self._authorize_tool(
                 context,
@@ -183,6 +192,66 @@ class Planner:
             f"Relevant memory:\n"
             f"{memory_context}"
         )
+
+    @classmethod
+    def _select_memory_strategy(
+        cls,
+        context: AgentContext,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """
+        Select the first valid structured execution strategy from memory.
+
+        Memory text alone never changes tool selection.
+
+        A valid strategy must contain:
+
+        {
+            "tool_name": "<registered tool>",
+            "tool_args": { ... },
+        }
+
+        Malformed or unregistered strategies are ignored so normal
+        task-based planning remains available as a safe fallback.
+        """
+
+        for memory in context.memories:
+            metadata = memory.metadata
+
+            if not isinstance(metadata, Mapping):
+                continue
+
+            strategy = metadata.get("strategy")
+
+            if not isinstance(strategy, Mapping):
+                continue
+
+            tool_name = strategy.get("tool_name")
+
+            if not isinstance(tool_name, str):
+                continue
+
+            tool_name = tool_name.strip()
+
+            if not tool_name:
+                continue
+
+            if tool_name not in cls.TOOL_CAPABILITIES:
+                continue
+
+            tool_args = strategy.get(
+                "tool_args",
+                {},
+            )
+
+            if not isinstance(tool_args, Mapping):
+                continue
+
+            return (
+                tool_name,
+                dict(tool_args),
+            )
+
+        return None
 
     @classmethod
     def _authorize_tool(

@@ -828,3 +828,93 @@ def test_loop_uses_retrieved_recovery_memory_in_future_execution() -> None:
 
     assert "Relevant memory:" in step.description
     assert recovery_output in step.description
+
+
+def test_loop_executes_memory_guided_strategy_end_to_end(
+    tmp_path,
+) -> None:
+    """
+    Verify V0.7.7 end-to-end strategy guidance:
+
+    historical structured strategy memory
+    -> memory retrieval
+    -> AgentLoop context enrichment
+    -> Planner strategy selection
+    -> ExecutionPlan tool and arguments
+    -> AgentRuntime execution
+    -> actual filesystem result.
+
+    The task itself asks for a calculation, so normal planning would
+    select the calculator. The structured memory deliberately selects
+    filesystem/read instead. This proves that the structured memory
+    changes the actual execution strategy rather than only enriching
+    the step description.
+    """
+
+    strategy_file = tmp_path / "recovery.txt"
+    strategy_file.write_text(
+        "memory-guided recovery succeeded",
+        encoding="utf-8",
+    )
+
+    store = InMemoryMemoryStore()
+    memory = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    previous_task = Task(
+        description="Recover a failed file-processing task",
+    )
+
+    strategy_memory = MemoryEntry(
+        content=(
+            "Previous recovery succeeded by reading the backup "
+            "file with the filesystem tool."
+        ),
+        task_id=previous_task.id,
+        agent_id="test-agent",
+        metadata={
+            "source": "runtime",
+            "strategy": {
+                "tool_name": "filesystem",
+                "tool_args": {
+                    "operation": "read",
+                    "path": str(strategy_file),
+                },
+            },
+        },
+    )
+
+    memory.store.store(strategy_memory)
+
+    future_task = Task(
+        description="Calculate 12 * 8 using the previous recovery strategy",
+    )
+
+    planner = Planner()
+
+    runtime = AgentRuntime(
+        planner=planner,
+        tool_registry=create_builtin_registry(),
+    )
+
+    loop = AgentLoop(
+        planner=planner,
+        runtime=runtime,
+        memory=memory,
+        max_iterations=10,
+        max_retries=3,
+    )
+
+    result = loop.run(future_task)
+
+    assert result.completed
+    assert result.action == AutonomyAction.COMPLETE
+    assert result.result.succeeded
+
+    assert result.result.output is not None
+    assert "memory-guided recovery succeeded" in result.result.output
+
+    assert result.result.executed_steps == 1
+    assert result.result.task_id == future_task.id

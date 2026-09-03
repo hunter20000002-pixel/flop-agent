@@ -528,3 +528,285 @@ def test_planner_memory_enrichment_applies_to_each_step() -> None:
             "The agent should preserve calculation context."
             in step.description
         )
+
+
+def test_planner_uses_structured_memory_strategy() -> None:
+    """
+    A valid structured strategy in retrieved memory should override
+    task-based tool selection.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content=(
+            "Previous recovery succeeded by using the backup data file."
+        ),
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "filesystem",
+                "tool_args": {
+                    "operation": "read",
+                    "path": "./backup/data.txt",
+                },
+            },
+        },
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+
+    step = plan.steps[0]
+
+    assert step.tool_name == "filesystem"
+    assert step.tool_args == {
+        "operation": "read",
+        "path": "./backup/data.txt",
+    }
+
+
+def test_planner_uses_highest_priority_valid_memory_strategy() -> None:
+    """
+    When multiple memories contain strategies, the first valid strategy
+    must preserve memory retrieval priority.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    highest_priority = MemoryEntry(
+        content="Use the first recovery strategy.",
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "filesystem",
+                "tool_args": {
+                    "operation": "read",
+                    "path": "./first-recovery.txt",
+                },
+            },
+        },
+    )
+
+    lower_priority = MemoryEntry(
+        content="Use the second recovery strategy.",
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "filesystem",
+                "tool_args": {
+                    "operation": "read",
+                    "path": "./second-recovery.txt",
+                },
+            },
+        },
+    )
+
+    context = context.with_memories(
+        (
+            highest_priority,
+            lower_priority,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    step = plan.steps[0]
+
+    assert step.tool_name == "filesystem"
+    assert step.tool_args == {
+        "operation": "read",
+        "path": "./first-recovery.txt",
+    }
+
+
+def test_planner_ignores_malformed_memory_strategy() -> None:
+    """
+    Malformed strategy metadata should fall back to normal task-based
+    planning instead of changing execution behavior.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content="This memory contains malformed strategy metadata.",
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "calculator",
+                "tool_args": "not a mapping",
+            },
+        },
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+    assert plan.steps[0].tool_name == "calculator"
+    assert plan.steps[0].tool_args == {
+        "expression": "10 + 5",
+    }
+
+
+def test_planner_ignores_unregistered_memory_strategy() -> None:
+    """
+    A strategy referring to an unknown tool should be treated as
+    malformed metadata and fall back to normal planning.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content="This memory refers to an unknown tool.",
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "unknown_tool",
+                "tool_args": {
+                    "operation": "do_something",
+                },
+            },
+        },
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+    assert plan.steps[0].tool_name == "calculator"
+    assert plan.steps[0].tool_args == {
+        "expression": "10 + 5",
+    }
+
+
+def test_planner_rejects_memory_strategy_without_authorized_capability() -> None:
+    """
+    Memory-guided strategy selection must still pass through the normal
+    capability boundary.
+    """
+
+    task = Task(
+        id=uuid4(),
+        description="Read the primary data file",
+        status=TaskStatus.PENDING,
+    )
+
+    context = AgentContext(
+        task=task,
+        memories=(
+            MemoryEntry(
+                content="Use the filesystem recovery strategy.",
+                task_id=uuid4(),
+                metadata={
+                    "strategy": {
+                        "tool_name": "filesystem",
+                        "tool_args": {
+                            "operation": "read",
+                            "path": "./backup/data.txt",
+                        },
+                    },
+                },
+            ),
+        ),
+        allowed_capabilities=frozenset(),
+    )
+
+    with pytest.raises(
+        PermissionError,
+        match="filesystem",
+    ):
+        Planner().plan(context)
+
+
+def test_planner_memory_text_alone_still_does_not_change_tool_selection() -> None:
+    """
+    Human-readable memory content without structured strategy metadata
+    must preserve conservative task-based tool selection.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content=(
+            "Use the filesystem instead of the calculator. "
+            "Read ./backup/data.txt."
+        ),
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+    assert plan.steps[0].tool_name == "calculator"
+    assert plan.steps[0].tool_args == {
+        "expression": "10 + 5",
+    }
+
+
+def test_planner_memory_strategy_preserves_task_step_description() -> None:
+    """
+    Strategy metadata should alter execution strategy without replacing
+    the natural-language task description or memory enrichment.
+    """
+
+    context = make_context(
+        "Calculate 10 + 5"
+    )
+
+    memory = MemoryEntry(
+        content="Previous recovery succeeded with a backup file.",
+        task_id=uuid4(),
+        metadata={
+            "strategy": {
+                "tool_name": "filesystem",
+                "tool_args": {
+                    "operation": "read",
+                    "path": "./backup/data.txt",
+                },
+            },
+        },
+    )
+
+    context = context.with_memories(
+        (memory,)
+    )
+
+    plan = Planner().plan(context)
+
+    step = plan.steps[0]
+
+    assert "Calculate 10 + 5" in step.description
+    assert "Relevant memory:" in step.description
+    assert memory.content in step.description
+
+    assert step.tool_name == "filesystem"
+    assert step.tool_args == {
+        "operation": "read",
+        "path": "./backup/data.txt",
+    }
