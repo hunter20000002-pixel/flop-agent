@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.agent.history import ExecutionHistory
+from src.agent.memory import MemoryEntry
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task
@@ -34,6 +35,7 @@ class AutonomyDecisionContext:
     replan_count: int = 0
     allowed_capabilities: frozenset[str] | None = None
     remaining_step_budget: int | None = None
+    memories: tuple[MemoryEntry, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate and normalize the decision context."""
@@ -113,6 +115,17 @@ class AutonomyDecisionContext:
                 normalized,
             )
 
+        if not isinstance(self.memories, tuple):
+            raise TypeError(
+                "memories must be a tuple"
+            )
+
+        for memory in self.memories:
+            if not isinstance(memory, MemoryEntry):
+                raise TypeError(
+                    "memories must contain only MemoryEntry objects"
+                )
+
     @staticmethod
     def _validate_counter(
         value: int,
@@ -129,10 +142,6 @@ class AutonomyDecisionContext:
             raise ValueError(
                 f"{name} must be a non-negative integer"
             )
-
-    # --------------------------------------------------------------
-    # Canonical autonomy-context properties
-    # --------------------------------------------------------------
 
     @property
     def task_id(self) -> str:
@@ -154,6 +163,18 @@ class AutonomyDecisionContext:
         """Return the capabilities authorized for this execution."""
 
         return self.allowed_capabilities
+
+    @property
+    def memory_count(self) -> int:
+        """Return the number of memories available to autonomy."""
+
+        return len(self.memories)
+
+    @property
+    def has_memories(self) -> bool:
+        """Return True when autonomy has memory evidence available."""
+
+        return bool(self.memories)
 
     @property
     def has_plan(self) -> bool:
@@ -223,10 +244,6 @@ class AutonomyDecisionContext:
 
         return self.remaining_step_budget == 0
 
-    # --------------------------------------------------------------
-    # AgentContext compatibility properties
-    # --------------------------------------------------------------
-
     @property
     def plan(self) -> ExecutionPlan | None:
         """Compatibility alias for AgentContext.plan."""
@@ -263,16 +280,6 @@ class AutonomyDecisionContext:
         """
 
         return "running"
-
-    @property
-    def memories(self):
-        """
-        Compatibility placeholder for AgentContext.memories.
-
-        AutonomyDecisionContext currently does not own memory state.
-        """
-
-        return ()
 
     @property
     def agent_id(self):
@@ -312,6 +319,7 @@ class AutonomyDecisionContext:
             ),
             allowed_capabilities=self.allowed_capabilities,
             remaining_step_budget=self.remaining_step_budget,
+            memories=self.memories,
         )
 
     def with_plan(
@@ -331,6 +339,7 @@ class AutonomyDecisionContext:
             replan_count=self.replan_count,
             allowed_capabilities=self.allowed_capabilities,
             remaining_step_budget=self.remaining_step_budget,
+            memories=self.memories,
         )
 
     def with_step(
@@ -350,6 +359,7 @@ class AutonomyDecisionContext:
             replan_count=self.replan_count,
             allowed_capabilities=self.allowed_capabilities,
             remaining_step_budget=self.remaining_step_budget,
+            memories=self.memories,
         )
 
     def with_result(
@@ -369,6 +379,7 @@ class AutonomyDecisionContext:
             replan_count=self.replan_count,
             allowed_capabilities=self.allowed_capabilities,
             remaining_step_budget=self.remaining_step_budget,
+            memories=self.memories,
         )
 
     def with_remaining_step_budget(
@@ -388,4 +399,25 @@ class AutonomyDecisionContext:
             replan_count=self.replan_count,
             allowed_capabilities=self.allowed_capabilities,
             remaining_step_budget=remaining_step_budget,
+            memories=self.memories,
+        )
+
+    def with_memories(
+        self,
+        memories: tuple[MemoryEntry, ...],
+    ) -> AutonomyDecisionContext:
+        """Return a copy with updated autonomy memories."""
+
+        return AutonomyDecisionContext(
+            task=self.task,
+            current_plan=self.current_plan,
+            current_step=self.current_step,
+            execution_history=self.execution_history,
+            last_result=self.last_result,
+            failure_count=self.failure_count,
+            retry_count=self.retry_count,
+            replan_count=self.replan_count,
+            allowed_capabilities=self.allowed_capabilities,
+            remaining_step_budget=self.remaining_step_budget,
+            memories=memories,
         )

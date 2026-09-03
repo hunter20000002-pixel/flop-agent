@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from src.agent.autonomy_context import AutonomyDecisionContext
 from src.agent.history import ExecutionHistory
+from src.agent.memory import MemoryEntry
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task, TaskStatus
+
 
 def make_context(
     *,
@@ -15,6 +19,7 @@ def make_context(
     retry_count: int = 0,
     replan_count: int = 0,
     remaining_step_budget: int | None = None,
+    memories: tuple[MemoryEntry, ...] = (),
 ) -> AutonomyDecisionContext:
     task = Task(
         description="Autonomy decision context"
@@ -45,6 +50,7 @@ def make_context(
         replan_count=replan_count,
         allowed_capabilities=allowed_capabilities,
         remaining_step_budget=remaining_step_budget,
+        memories=memories,
     )
 
 
@@ -72,6 +78,49 @@ def test_context_stores_decision_evidence() -> None:
     assert context.allowed_capabilities == frozenset(
         {"calculator"}
     )
+
+
+def test_context_stores_memories() -> None:
+    memory = MemoryEntry(
+        content="Observed Technocore activity.",
+        task_id=uuid4(),
+    )
+
+    context = make_context(
+        memories=(memory,),
+    )
+
+    assert context.memories == (memory,)
+    assert context.memory_count == 1
+    assert context.has_memories
+
+
+def test_context_without_memories_has_no_memory_evidence() -> None:
+    context = make_context()
+
+    assert context.memories == ()
+    assert context.memory_count == 0
+    assert not context.has_memories
+
+
+def test_context_rejects_non_tuple_memories() -> None:
+    with pytest.raises(
+        TypeError,
+        match="memories must be a tuple",
+    ):
+        make_context(
+            memories=["invalid"],
+        )
+
+
+def test_context_rejects_invalid_memory_entry() -> None:
+    with pytest.raises(
+        TypeError,
+        match="memories must contain only MemoryEntry objects",
+    ):
+        make_context(
+            memories=("invalid",),
+        )
 
 
 def test_context_exposes_plan_steps() -> None:
@@ -314,6 +363,7 @@ def test_with_counters_returns_new_context() -> None:
         updated.allowed_capabilities
         == context.allowed_capabilities
     )
+    assert updated.memories is context.memories
 
 
 def test_with_plan_returns_new_context() -> None:
@@ -334,6 +384,7 @@ def test_with_plan_returns_new_context() -> None:
     assert updated is not context
     assert updated.current_plan is new_plan
     assert updated.current_step is context.current_step
+    assert updated.memories is context.memories
 
 
 def test_with_step_returns_new_context() -> None:
@@ -349,6 +400,7 @@ def test_with_step_returns_new_context() -> None:
     assert updated is not context
     assert updated.current_step is new_step
     assert updated.current_plan is context.current_plan
+    assert updated.memories is context.memories
 
 
 def test_with_result_returns_new_context() -> None:
@@ -367,6 +419,7 @@ def test_with_result_returns_new_context() -> None:
     assert updated.last_result is result
     assert context.last_result is None
     assert updated.has_last_result
+    assert updated.memories is context.memories
 
 
 def test_with_remaining_step_budget_returns_new_context() -> None:
@@ -379,6 +432,25 @@ def test_with_remaining_step_budget_returns_new_context() -> None:
     assert updated is not context
     assert context.remaining_step_budget == 10
     assert updated.remaining_step_budget == 4
+    assert updated.memories is context.memories
+
+
+def test_with_memories_returns_new_context() -> None:
+    context = make_context()
+
+    memory = MemoryEntry(
+        content="New autonomy memory.",
+        task_id=uuid4(),
+    )
+
+    updated = context.with_memories(
+        (memory,),
+    )
+
+    assert updated is not context
+    assert context.memories == ()
+    assert updated.memories == (memory,)
+    assert updated.memory_count == 1
 
 
 def test_context_evidence_properties() -> None:
@@ -401,6 +473,7 @@ def test_positive_step_budget_is_not_exhausted() -> None:
     )
 
     assert not context.budget_exhausted
+
 
 def test_goal_verification_failed_property() -> None:
     from src.agent.goal import GoalVerificationResult

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -141,6 +140,7 @@ class AutonomyPolicy:
             "retry_count": context.retry_count,
             "replan_count": context.replan_count,
             "remaining_step_budget": context.remaining_step_budget,
+            "memory_count": context.memory_count,
             "current_step": (
                 context.current_step.id
                 if context.current_step is not None
@@ -178,6 +178,7 @@ class AutonomyPolicy:
             "retry_count": 0,
             "replan_count": 0,
             "remaining_step_budget": None,
+            "memory_count": context.memory_count,
             "current_step": (
                 context.plan.steps[0].id
                 if context.plan is not None

@@ -2,7 +2,13 @@ from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from src.agent.context import AgentContext
+from src.agent.decision import (
+    AutonomyAction,
+    AutonomyDecision,
+    AutonomyPolicy,
+)
 from src.agent.loop import AgentLoop
+from src.agent.memory import MemoryEntry
 from src.agent.memory_integration import MemoryIntegration
 from src.agent.observation import TechnocoreObservation
 from src.agent.result import ExecutionResult
@@ -102,3 +108,59 @@ def test_loop_does_not_store_non_observation_data():
     )
 
     memory.store_observation.assert_not_called()
+
+
+def test_loop_passes_context_memories_into_autonomy_decision():
+    task = Task(
+        description="Use historical memory",
+    )
+
+    memory_entry = MemoryEntry(
+        content="Historical Technocore observation.",
+        task_id=task.id,
+    )
+
+    context = AgentContext(
+        task=task,
+        state="ready",
+        memories=(memory_entry,),
+    )
+
+    planner = Mock()
+    runtime = Mock()
+    policy = Mock(spec=AutonomyPolicy)
+
+    expected_decision = AutonomyDecision(
+        action=AutonomyAction.REPLAN,
+        reason="test decision",
+    )
+
+    policy.decide.return_value = expected_decision
+
+    loop = AgentLoop(
+        planner=planner,
+        runtime=runtime,
+        policy=policy,
+    )
+
+    decision = loop._decide(
+        task=task,
+        context=context,
+        result=None,
+        failure_count=0,
+        retry_count=0,
+        replan_count=1,
+        capabilities=None,
+    )
+
+    assert decision is expected_decision
+
+    policy.decide.assert_called_once()
+
+    autonomy_context = policy.decide.call_args.args[0]
+
+    assert autonomy_context.memories == (
+        memory_entry,
+    )
+    assert autonomy_context.memory_count == 1
+    assert autonomy_context.has_memories

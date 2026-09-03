@@ -338,6 +338,7 @@ class AgentLoop:
                 replan_count=replan_count,
                 allowed_capabilities=capabilities,
                 remaining_step_budget=None,
+                memories=context.memories,
             )
 
             return self.policy.decide(autonomy_context)

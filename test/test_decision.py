@@ -15,6 +15,8 @@ from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task, TaskStatus
 
+from src.agent.memory import MemoryEntry
+
 def make_task() -> Task:
     return Task(description="Test autonomous decision making")
 
@@ -837,3 +839,39 @@ def test_autonomy_policy_stops_after_goal_verification_failure_and_replan() -> N
 
     assert decision.action == AutonomyAction.STOP
     assert "replanning" in decision.reason
+
+def test_autonomy_policy_evidence_contains_memory_count() -> None:
+    context = make_autonomy_context()
+
+    memory = MemoryEntry(
+        content="Observed Technocore activity.",
+        task_id=context.task.id,
+    )
+
+    context = context.with_memories(
+        (memory,),
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["memory_count"] == 1
+
+
+def test_legacy_policy_evidence_contains_memory_count() -> None:
+    task = make_task()
+
+    memory = MemoryEntry(
+        content="Historical execution memory.",
+        task_id=task.id,
+    )
+
+    context = AgentContext(
+        task=task,
+        plan=make_plan(task),
+        state="running",
+        memories=(memory,),
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.evidence["memory_count"] == 1
