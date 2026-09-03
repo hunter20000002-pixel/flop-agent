@@ -4,9 +4,10 @@ import re
 from typing import Any
 from uuid import UUID
 
+from src.agent.result import ExecutionResult
+
 from src.agent.context import AgentContext
 from src.agent.memory import InMemoryStore, MemoryEntry, MemoryStore
-from src.agent.result import ExecutionResult
 from src.agent.task import Task
 
 
@@ -186,6 +187,7 @@ class MemoryIntegration:
         context: AgentContext,
         content: str,
         *,
+        source: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryEntry:
         """Store a memory associated with the current task and agent."""
@@ -196,6 +198,7 @@ class MemoryIntegration:
         return self.store_for_task(
             context.task.id,
             content,
+            source=source,
             metadata=metadata,
         )
 
@@ -204,6 +207,7 @@ class MemoryIntegration:
         task_id: UUID,
         content: str,
         *,
+        source: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryEntry:
         """Store a memory for a task under this integration's agent."""
@@ -211,11 +215,18 @@ class MemoryIntegration:
         if not isinstance(task_id, UUID):
             raise TypeError("task_id must be a UUID")
 
+        self._validate_source(source)
+
+        combined_metadata = dict(metadata or {})
+
+        if "source" not in combined_metadata and source is not None:
+            combined_metadata["source"] = source
+
         entry = MemoryEntry(
             content=content,
             task_id=task_id,
             agent_id=self.agent_id,
-            metadata=metadata or {},
+            metadata=combined_metadata,
         )
 
         return self.store.store(entry)
@@ -260,6 +271,21 @@ class MemoryIntegration:
         memories = self.retrieve(context)
 
         return context.with_memories(memories)
+
+    @staticmethod
+    def _validate_source(
+        source: str | None,
+    ) -> None:
+        """Validate an explicitly supplied memory source."""
+
+        if source is None:
+            return
+
+        if not isinstance(source, str):
+            raise TypeError("source must be a string or None")
+
+        if not source.strip():
+            raise ValueError("source must not be empty")
 
     @staticmethod
     def _tokens(
