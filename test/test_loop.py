@@ -1,25 +1,26 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
+from src.agent.autonomy_context import AutonomyDecisionContext
+from src.agent.context import AgentContext
 from src.agent.decision import (
     AutonomyAction,
     AutonomyDecision,
     AutonomyPolicy,
 )
-from src.agent.loop import AgentLoop
-from src.agent.plan import ExecutionPlan, ExecutionStep
-from src.agent.result import ExecutionResult
-from src.agent.task import Task, TaskStatus
-from src.agent.runtime import AgentRuntime
-
-from src.agent.decision import AutonomyAction
 from src.agent.goal import GoalVerificationResult, GoalVerifier
+from src.agent.loop import AgentLoop
+from src.agent.memory import MemoryEntry
+from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
-from src.agent.task import Task
+from src.agent.task import Task, TaskStatus
 from src.tools.builtin import create_builtin_registry
+
 
 class RecordingPlanner:
     def __init__(self) -> None:
@@ -40,6 +41,59 @@ class RecordingPlanner:
         )
 
         return self.plan_created
+
+
+class ContextRecordingPlanner(Planner):
+    """Planner that records every context received during planning."""
+
+    def __init__(self) -> None:
+        self.received_contexts: list[AgentContext] = []
+
+    def plan(
+        self,
+        context: AgentContext,
+        *,
+        task: Task | None = None,
+    ) -> ExecutionPlan:
+        self.received_contexts.append(context)
+
+        return super().plan(
+            context,
+            task=task,
+        )
+
+
+class RecordingMemory:
+    """Minimal memory integration used to verify planner enrichment."""
+
+    def __init__(
+        self,
+        memories: tuple[MemoryEntry, ...],
+    ) -> None:
+        self.agent_id = "test-agent"
+        self.memories = memories
+
+    def enrich_context(
+        self,
+        context: AgentContext,
+    ) -> AgentContext:
+        return context.with_memories(
+            self.memories
+        )
+
+    def store_execution_output(
+        self,
+        *args,
+        **kwargs,
+    ) -> None:
+        return None
+
+    def store_observation(
+        self,
+        *args,
+        **kwargs,
+    ) -> None:
+        return None
 
 
 class RecordingRuntime:
@@ -333,9 +387,8 @@ def test_agent_loop_executes_filesystem_tool(tmp_path):
     assert result.result.succeeded
     assert result.result.output is not None
 
-def test_loop_does_not_complete_when_goal_verification_fails() -> None:
-    from src.agent.goal import GoalVerificationResult, GoalVerifier
 
+def test_loop_does_not_complete_when_goal_verification_fails() -> None:
     class UnsatisfiedVerifier(GoalVerifier):
         def _verify(self, task, result):
             return GoalVerificationResult(
@@ -365,8 +418,6 @@ def test_loop_does_not_complete_when_goal_verification_fails() -> None:
 
 
 def test_loop_reacts_to_goal_verification_failure_with_replan() -> None:
-    from src.agent.goal import GoalVerificationResult, GoalVerifier
-
     class UnsatisfiedVerifier(GoalVerifier):
         def __init__(self):
             self.calls = 0
@@ -446,3 +497,82 @@ def test_loop_executes_replanned_plan_after_goal_verification_failure() -> None:
     assert verifier.calls == 2
     assert result.result.goal_verification is not None
     assert result.result.goal_verification.satisfied
+
+
+def test_loop_replan_passes_memory_to_planner() -> None:
+    """
+    Replanning should give the planner the enriched AgentContext so
+    memory can influence the newly created execution plan.
+    """
+
+    task = Task(
+        description="Explain the repeated failure recovery strategy"
+    )
+
+    memory_entry = MemoryEntry(
+        content=(
+            "Previous attempts repeatedly failed because the "
+            "execution strategy was insufficient."
+        ),
+        task_id=uuid4(),
+    )
+
+    memory = RecordingMemory(
+        memories=(memory_entry,)
+    )
+
+    planner = ContextRecordingPlanner()
+
+    first_failure = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.FAILED,
+        executed_steps=1,
+        error="first execution failure",
+    )
+
+    second_failure = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.FAILED,
+        executed_steps=1,
+        error="second execution failure",
+    )
+
+    successful_result = ExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        executed_steps=1,
+        output="recovered after memory-informed replanning",
+    )
+
+    runtime = RecordingRuntime(
+        results=[
+            first_failure,
+            second_failure,
+            successful_result,
+        ]
+    )
+
+    loop = AgentLoop(
+        planner=planner,
+        runtime=runtime,
+        memory=memory,
+        max_iterations=10,
+        max_retries=3,
+    )
+
+    result = loop.run(task)
+
+    assert result.completed
+    assert result.action == AutonomyAction.COMPLETE
+    assert runtime.calls == 3
+
+    assert len(planner.received_contexts) >= 2
+
+    replan_context = planner.received_contexts[1]
+
+    assert replan_context.memories == (
+        memory_entry,
+    )
+
+    plan = result.result
+    assert plan.succeeded

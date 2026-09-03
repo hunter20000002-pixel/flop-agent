@@ -305,7 +305,8 @@ class AgentLoop:
         """Choose the next action using the richest available context."""
 
         use_autonomy_context = (
-            replan_count > 0
+            failure_count > 0
+            or replan_count > 0
             or (
                 result is not None
                 and result.goal_verification is not None
