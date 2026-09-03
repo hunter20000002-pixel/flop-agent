@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 from uuid import UUID
 
@@ -35,7 +36,7 @@ class MemoryIntegration:
         self,
         context: AgentContext,
     ) -> tuple[MemoryEntry, ...]:
-        """Retrieve memories relevant to an agent context."""
+        """Retrieve current-task and relevant historical memories."""
 
         if not isinstance(context, AgentContext):
             raise TypeError("context must be an AgentContext")
@@ -46,10 +47,17 @@ class MemoryIntegration:
             else context.agent_id
         )
 
-        return self.store.query(
+        current_task_memories = self.store.query(
             task_id=context.task.id,
             agent_id=agent_id,
         )
+
+        historical_memories = self.retrieve_relevant(
+            context.task,
+            agent_id=agent_id,
+        )
+
+        return current_task_memories + historical_memories
 
     def retrieve_for_task(
         self,
@@ -64,6 +72,114 @@ class MemoryIntegration:
             task_id=task_id,
             agent_id=self.agent_id,
         )
+
+    def retrieve_relevant(
+        self,
+        task: Task,
+        *,
+        agent_id: str | None = None,
+        limit: int | None = None,
+    ) -> tuple[MemoryEntry, ...]:
+        """Retrieve historical memories relevant to a task.
+
+        Relevance is determined by deterministic lexical overlap between
+        the task description and memory content. Memories are restricted
+        to the requested agent and are ordered by descending relevance,
+        with creation order used as the deterministic tie-breaker.
+
+        The current task itself is excluded from the historical search.
+        """
+
+        if not isinstance(task, Task):
+            raise TypeError("task must be a Task")
+
+        if agent_id is None:
+            agent_id = self.agent_id
+
+        if agent_id is not None:
+            if not isinstance(agent_id, str):
+                raise TypeError(
+                    "agent_id must be a string or None"
+                )
+
+            if not agent_id.strip():
+                raise ValueError(
+                    "agent_id must not be empty"
+                )
+
+        if limit is not None:
+            if not isinstance(limit, int):
+                raise TypeError(
+                    "limit must be an integer or None"
+                )
+
+            if limit < 0:
+                raise ValueError(
+                    "limit must not be negative"
+                )
+
+            if limit == 0:
+                return ()
+
+        task_tokens = self._tokens(
+            task.description,
+        )
+
+        if not task_tokens:
+            return ()
+
+        candidates = self.store.query(
+            agent_id=agent_id,
+        )
+
+        scored: list[
+            tuple[
+                int,
+                int,
+                MemoryEntry,
+            ]
+        ] = []
+
+        for position, entry in enumerate(candidates):
+            if entry.task_id == task.id:
+                continue
+
+            memory_tokens = self._tokens(
+                entry.content,
+            )
+
+            if not memory_tokens:
+                continue
+
+            overlap = task_tokens & memory_tokens
+
+            if not overlap:
+                continue
+
+            scored.append(
+                (
+                    len(overlap),
+                    -position,
+                    entry,
+                )
+            )
+
+        scored.sort(
+            key=lambda item: (
+                -item[0],
+                -item[1],
+            )
+        )
+
+        results = tuple(
+            entry
+            for _, _, entry in scored
+        )
+
+        if limit is not None:
+            return results[:limit]
+
+        return results
 
     def remember(
         self,
@@ -144,3 +260,21 @@ class MemoryIntegration:
         memories = self.retrieve(context)
 
         return context.with_memories(memories)
+
+    @staticmethod
+    def _tokens(
+        text: str,
+    ) -> frozenset[str]:
+        """Return normalized lexical tokens for relevance matching."""
+
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+
+        return frozenset(
+            token
+            for token in re.findall(
+                r"[a-z0-9]+",
+                text.lower(),
+            )
+            if len(token) >= 2
+        )
