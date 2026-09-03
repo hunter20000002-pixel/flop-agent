@@ -5,6 +5,8 @@ from uuid import uuid4
 import pytest
 
 from src.agent.context import AgentContext
+from src.agent.memory import MemoryEntry
+from src.agent.plan import ExecutionPlan
 from src.agent.planner import Planner
 from src.agent.task import Task, TaskStatus
 from src.config import DEFAULT_CONFIG
@@ -177,3 +179,53 @@ def test_planner_recognizes_technocore_observation_verbs(
 
     assert plan.step_count == 1
     assert plan.steps[0].tool_name == "technocore_observer"
+
+
+def test_planner_uses_highest_priority_memory() -> None:
+    """
+    Planner should consume the highest-priority memory rather than the
+    lowest-priority memory.
+    """
+
+    context = make_context(
+        "Explain the memory-aware planning architecture"
+    )
+
+    highest_priority = MemoryEntry(
+        content=(
+            "The planner should use the most relevant historical "
+            "memory when forming an execution step."
+        ),
+        task_id=uuid4(),
+    )
+
+    lower_priority = MemoryEntry(
+        content=(
+            "This memory is less relevant and should not be selected "
+            "when a higher-priority memory is available."
+        ),
+        task_id=uuid4(),
+    )
+
+    context = context.with_memories(
+        (
+            highest_priority,
+            lower_priority,
+        )
+    )
+
+    plan = Planner().plan(context)
+
+    assert plan.step_count == 1
+
+    step = plan.steps[0]
+
+    assert (
+        "The planner should use the most relevant historical memory"
+        in step.description
+    )
+
+    assert (
+        "This memory is less relevant"
+        not in step.description
+    )

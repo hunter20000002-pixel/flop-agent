@@ -166,12 +166,19 @@ class Planner:
         context: AgentContext,
         description: str,
     ) -> str:
-        """Build the execution description, including relevant memory."""
+        """
+        Build the execution description using the highest-priority memory.
+
+        AgentContext.memories are already ordered by MemoryIntegration:
+        current-task memories first, followed by historical memories in
+        descending relevance order. The planner therefore consumes the
+        first available memory rather than reversing that priority.
+        """
 
         if not context.memories:
             return description
 
-        relevant_memory = context.memories[-1]
+        relevant_memory = context.memories[0]
 
         if not relevant_memory.content.strip():
             return description
