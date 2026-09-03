@@ -13,6 +13,7 @@ from src.agent.decision import (
 )
 from src.agent.history import ExecutionHistory
 from src.agent.memory_integration import MemoryIntegration
+from src.agent.observation import TechnocoreObservation
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
 from src.agent.runtime import AgentRuntime
@@ -422,6 +423,18 @@ class AgentLoop:
             self.memory.store_execution_output(
                 updated_context,
                 result.output,
+            )
+
+        if (
+            self.memory is not None
+            and isinstance(
+                result.data,
+                TechnocoreObservation,
+            )
+        ):
+            self.memory.store_observation(
+                updated_context,
+                result.data,
             )
 
         if self.memory is not None:
