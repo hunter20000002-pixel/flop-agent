@@ -14,6 +14,7 @@ from src.agent.decision import (
 from src.agent.goal import GoalVerificationResult, GoalVerifier
 from src.agent.loop import AgentLoop
 from src.agent.memory import MemoryEntry
+from src.agent.memory_integration import MemoryIntegration
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.planner import Planner
 from src.agent.result import ExecutionResult
@@ -63,8 +64,8 @@ class ContextRecordingPlanner(Planner):
         )
 
 
-class RecordingMemory:
-    """Minimal memory integration used to verify planner enrichment."""
+class RecordingMemory(MemoryIntegration):
+    """Memory integration used to verify planner enrichment and persistence."""
 
     def __init__(
         self,
@@ -72,6 +73,13 @@ class RecordingMemory:
     ) -> None:
         self.agent_id = "test-agent"
         self.memories = memories
+        self.stored_outputs: list[
+            tuple[
+                AgentContext,
+                str,
+                dict | None,
+            ]
+        ] = []
 
     def enrich_context(
         self,
@@ -83,17 +91,33 @@ class RecordingMemory:
 
     def store_execution_output(
         self,
-        *args,
-        **kwargs,
-    ) -> None:
-        return None
+        context: AgentContext,
+        output: str,
+        *,
+        metadata: dict | None = None,
+    ) -> MemoryEntry:
+        self.stored_outputs.append(
+            (
+                context,
+                output,
+                metadata,
+            )
+        )
+
+        return MemoryEntry(
+            content=output,
+            task_id=context.task.id,
+            metadata=metadata or {},
+        )
 
     def store_observation(
         self,
-        *args,
-        **kwargs,
-    ) -> None:
-        return None
+        context: AgentContext,
+        observation,
+    ) -> MemoryEntry:
+        raise AssertionError(
+            "observation storage was not expected"
+        )
 
 
 class RecordingRuntime:
@@ -514,7 +538,7 @@ def test_loop_replan_passes_memory_to_planner() -> None:
             "Previous attempts repeatedly failed because the "
             "execution strategy was insufficient."
         ),
-        task_id=uuid4(),
+        task_id=task.id,
     )
 
     memory = RecordingMemory(
@@ -573,6 +597,16 @@ def test_loop_replan_passes_memory_to_planner() -> None:
     assert replan_context.memories == (
         memory_entry,
     )
+
+    assert len(memory.stored_outputs) == 1
+
+    stored_context, stored_output, metadata = (
+        memory.stored_outputs[0]
+    )
+
+    assert stored_context.task.id == task.id
+    assert stored_output == "recovered after memory-informed replanning"
+    assert metadata is None
 
     plan = result.result
     assert plan.succeeded
