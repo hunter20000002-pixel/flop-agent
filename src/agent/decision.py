@@ -239,6 +239,16 @@ class AutonomyPolicy:
 
             if context.last_result.failed:
                 if context.failure_count >= 2:
+                    if context.has_memories:
+                        return AutonomyDecision(
+                            action=AutonomyAction.REPLAN,
+                            reason=(
+                                "repeated execution failures require "
+                                "a new plan informed by relevant memory"
+                            ),
+                            evidence=evidence,
+                        )
+
                     return AutonomyDecision(
                         action=AutonomyAction.REPLAN,
                         reason=(

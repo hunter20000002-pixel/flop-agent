@@ -11,11 +11,11 @@ from src.agent.decision import (
     AutonomyPolicy,
 )
 from src.agent.history import ExecutionHistory
+from src.agent.memory import MemoryEntry
 from src.agent.plan import ExecutionPlan, ExecutionStep
 from src.agent.result import ExecutionResult
 from src.agent.task import Task, TaskStatus
 
-from src.agent.memory import MemoryEntry
 
 def make_task() -> Task:
     return Task(description="Test autonomous decision making")
@@ -74,6 +74,7 @@ def make_autonomy_context(
     remaining_step_budget: int | None = None,
     last_result: ExecutionResult | None = None,
     plan: ExecutionPlan | None = None,
+    memories: tuple[MemoryEntry, ...] = (),
 ) -> AutonomyDecisionContext:
     task = make_task()
 
@@ -92,6 +93,7 @@ def make_autonomy_context(
         retry_count=retry_count,
         replan_count=replan_count,
         remaining_step_budget=remaining_step_budget,
+        memories=memories,
     )
 
 
@@ -529,6 +531,7 @@ def test_autonomy_context_replans_after_repeated_failures():
     assert decision.action == AutonomyAction.REPLAN
     assert decision.should_replan
     assert "repeated execution failures" in decision.reason
+    assert "memory" not in decision.reason
 
 
 def test_autonomy_context_replans_when_failure_count_exceeds_two():
@@ -544,6 +547,56 @@ def test_autonomy_context_replans_when_failure_count_exceeds_two():
 
     assert decision.action == AutonomyAction.REPLAN
     assert decision.should_replan
+
+
+def test_autonomy_context_replans_with_memory_after_repeated_failures():
+    context = make_autonomy_context(
+        failure_count=2,
+    )
+
+    memory = MemoryEntry(
+        content="A previous execution encountered the same failure.",
+        task_id=context.task.id,
+    )
+
+    context = context.with_memories(
+        (memory,),
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.REPLAN
+    assert decision.should_replan
+    assert "repeated execution failures" in decision.reason
+    assert "relevant memory" in decision.reason
+    assert decision.evidence["memory_count"] == 1
+
+
+def test_autonomy_context_memory_does_not_change_first_failure_retry():
+    context = make_autonomy_context(
+        failure_count=1,
+        memories=(
+            MemoryEntry(
+                content="Previous execution memory.",
+            ),
+        ),
+    )
+
+    context = context.with_result(
+        make_failed_result(context)
+    )
+
+    decision = AutonomyPolicy().decide(context)
+
+    assert decision.action == AutonomyAction.RETRY
+    assert decision.should_retry
+    assert "most recent execution failed" in decision.reason
+    assert "memory" not in decision.reason
+    assert decision.evidence["memory_count"] == 1
 
 
 def test_autonomy_context_stops_when_budget_is_exhausted():
@@ -745,6 +798,7 @@ def test_policy_legacy_context_includes_evidence():
     assert decision.evidence["remaining_step_budget"] is None
     assert decision.evidence["current_step"] == context.plan.steps[0].id
 
+
 def test_autonomy_policy_replans_when_goal_verification_fails() -> None:
     from src.agent.goal import GoalVerificationResult
 
@@ -839,6 +893,7 @@ def test_autonomy_policy_stops_after_goal_verification_failure_and_replan() -> N
 
     assert decision.action == AutonomyAction.STOP
     assert "replanning" in decision.reason
+
 
 def test_autonomy_policy_evidence_contains_memory_count() -> None:
     context = make_autonomy_context()
