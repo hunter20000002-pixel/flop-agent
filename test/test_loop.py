@@ -741,3 +741,90 @@ def test_loop_completes_recovery_and_persists_memory_for_future_task() -> None:
     assert enriched.memories == (
         recovery_memory,
     )
+
+
+def test_loop_uses_retrieved_recovery_memory_in_future_execution() -> None:
+    """
+    Verify that recovery memory from an earlier task changes the
+    execution plan of a later related task.
+    """
+
+    store = InMemoryMemoryStore()
+    memory = MemoryIntegration(
+        store,
+        agent_id="test-agent",
+    )
+
+    previous_task = Task(
+        description=(
+            "Recover execution after repeated failure "
+            "using memory-informed replanning"
+        ),
+    )
+
+    recovery_output = (
+        "Recovered execution by switching to a memory-informed "
+        "replanning strategy after repeated failure."
+    )
+
+    recovery_memory = memory.store_execution_output(
+        AgentContext(
+            task=previous_task,
+            agent_id="test-agent",
+            state="running",
+        ),
+        recovery_output,
+    )
+
+    future_task = Task(
+        description=(
+            "Recover execution after repeated failure "
+            "with a memory-informed replanning strategy"
+        ),
+    )
+
+    successful_result = ExecutionResult(
+        task_id=future_task.id,
+        status=TaskStatus.COMPLETED,
+        executed_steps=1,
+        output="future execution succeeded",
+    )
+
+    planner = ContextRecordingPlanner()
+    runtime = RecordingRuntime(
+        results=[
+            successful_result,
+        ]
+    )
+
+    loop = AgentLoop(
+        planner=planner,
+        runtime=runtime,
+        memory=memory,
+        max_iterations=10,
+        max_retries=3,
+    )
+
+    result = loop.run(future_task)
+
+    assert result.completed
+    assert result.action == AutonomyAction.COMPLETE
+    assert result.result is successful_result
+    assert runtime.calls == 1
+
+    assert len(planner.received_contexts) == 1
+
+    planning_context = planner.received_contexts[0]
+
+    assert planning_context.task.id == future_task.id
+    assert planning_context.memories == (
+        recovery_memory,
+    )
+
+    assert runtime.received_plan is not None
+    assert len(runtime.received_plan.steps) == 1
+
+    step = runtime.received_plan.steps[0]
+
+    assert "Relevant memory:" in step.description
+    assert recovery_output in step.description
