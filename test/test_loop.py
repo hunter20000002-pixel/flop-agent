@@ -323,9 +323,9 @@ def test_agent_loop_executes_calculator_tool():
     assert result.result.output == "96"
 
 
-def test_agent_loop_executes_filesystem_tool():
+def test_agent_loop_executes_filesystem_tool(tmp_path):
     task = Task(
-        description="List the directory C:\\Users"
+        description=f"List the directory {tmp_path}"
     )
 
     result = AgentLoop().run(task)
